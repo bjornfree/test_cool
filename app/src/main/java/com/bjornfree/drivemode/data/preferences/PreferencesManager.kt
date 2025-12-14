@@ -2,6 +2,9 @@ package com.bjornfree.drivemode.data.preferences
 
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 
 /**
  * Централизованный менеджер для работы с SharedPreferences.
@@ -287,5 +290,170 @@ class PreferencesManager(context: Context) {
         if (isOff) {
             lastIgnitionOffTimestamp = now
         }
+    }
+
+    // ========================================
+    // Reactive Settings (Flow-based)
+    // ========================================
+
+    /**
+     * Data class для настроек overlay.
+     */
+    data class OverlaySettings(
+        val metricsBarEnabled: Boolean,
+        val metricsBarPosition: String,
+        val borderEnabled: Boolean,
+        val panelEnabled: Boolean
+    )
+
+    /**
+     * Data class для настроек подогрева сидений.
+     */
+    data class SeatHeatingSettings(
+        val seatAutoHeatMode: String,
+        val adaptiveHeating: Boolean,
+        val temperatureThreshold: Int,
+        val heatingLevel: Int,
+        val checkTempOnceOnStartup: Boolean,
+        val autoOffTimerMinutes: Int,
+        val temperatureSource: String
+    )
+
+    /**
+     * Реактивный Flow для подписки на изменения настроек overlay.
+     * Срабатывает ТОЛЬКО при изменении, не требует постоянного polling.
+     */
+    val overlaySettingsFlow: Flow<OverlaySettings> = callbackFlow {
+        // Отправляем текущие значения при подписке
+        trySend(getCurrentOverlaySettings())
+
+        // Создаем listener для отслеживания изменений
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            // Реагируем только на изменения overlay настроек
+            when (key) {
+                KEY_METRICS_BAR_ENABLED,
+                KEY_METRICS_BAR_POSITION,
+                KEY_BORDER_ENABLED,
+                KEY_PANEL_ENABLED -> {
+                    trySend(getCurrentOverlaySettings())
+                }
+            }
+        }
+
+        // Регистрируем listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+        // Удаляем listener при отписке
+        awaitClose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    /**
+     * Реактивный Flow для подписки на изменения настроек подогрева сидений.
+     * Срабатывает ТОЛЬКО при изменении, не требует постоянного polling.
+     */
+    val seatHeatingSettingsFlow: Flow<SeatHeatingSettings> = callbackFlow {
+        // Отправляем текущие значения при подписке
+        trySend(getCurrentSeatHeatingSettings())
+
+        // Создаем listener для отслеживания изменений
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            // Реагируем только на изменения настроек подогрева
+            when (key) {
+                KEY_SEAT_AUTO_HEAT_MODE,
+                KEY_ADAPTIVE_HEATING,
+                KEY_TEMP_THRESHOLD,
+                KEY_HEATING_LEVEL,
+                KEY_CHECK_TEMP_ONCE_ON_STARTUP,
+                KEY_AUTO_OFF_TIMER_MINUTES,
+                KEY_TEMPERATURE_SOURCE -> {
+                    trySend(getCurrentSeatHeatingSettings())
+                }
+            }
+        }
+
+        // Регистрируем listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+        // Удаляем listener при отписке
+        awaitClose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    /**
+     * Реактивный Flow для подписки на изменения темы приложения.
+     * Срабатывает ТОЛЬКО при изменении, не требует постоянного polling.
+     */
+    val themeModeFlow: Flow<String> = callbackFlow {
+        // Отправляем текущее значение при подписке
+        trySend(themeMode)
+
+        // Создаем listener для отслеживания изменений
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_THEME_MODE) {
+                trySend(themeMode)
+            }
+        }
+
+        // Регистрируем listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+        // Удаляем listener при отписке
+        awaitClose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    /**
+     * Реактивный Flow для подписки на изменения demo mode.
+     * Срабатывает ТОЛЬКО при изменении, не требует постоянного polling.
+     */
+    val demoModeFlow: Flow<Boolean> = callbackFlow {
+        // Отправляем текущее значение при подписке
+        trySend(demoMode)
+
+        // Создаем listener для отслеживания изменений
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_DEMO_MODE) {
+                trySend(demoMode)
+            }
+        }
+
+        // Регистрируем listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+        // Удаляем listener при отписке
+        awaitClose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    /**
+     * Получает текущие настройки overlay.
+     */
+    private fun getCurrentOverlaySettings(): OverlaySettings {
+        return OverlaySettings(
+            metricsBarEnabled = metricsBarEnabled,
+            metricsBarPosition = metricsBarPosition,
+            borderEnabled = borderEnabled,
+            panelEnabled = panelEnabled
+        )
+    }
+
+    /**
+     * Получает текущие настройки подогрева сидений.
+     */
+    private fun getCurrentSeatHeatingSettings(): SeatHeatingSettings {
+        return SeatHeatingSettings(
+            seatAutoHeatMode = seatAutoHeatMode,
+            adaptiveHeating = adaptiveHeating,
+            temperatureThreshold = temperatureThreshold,
+            heatingLevel = heatingLevel,
+            checkTempOnceOnStartup = checkTempOnceOnStartup,
+            autoOffTimerMinutes = autoOffTimerMinutes,
+            temperatureSource = temperatureSource
+        )
     }
 }

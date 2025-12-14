@@ -473,11 +473,19 @@ data class DrivingStatusOverlayState(
 )
 
 class DrivingStatusOverlayController(
-    private val appContext: Context
+    private val appContext: Context,
+    initialPosition: String = "bottom"
 ) {
 
     companion object {
+        @Volatile
         private var currentInstance: DrivingStatusOverlayController? = null
+
+        /**
+         * Получить текущий активный instance.
+         * ВСЕГДА используй этот метод вместо прямого обращения к переменной.
+         */
+        fun getInstance(): DrivingStatusOverlayController? = currentInstance
 
         private const val COLOR_BG_DARK = 0xF01E1E1E.toInt()
         private const val COLOR_BG_LIGHT = 0xF0F5F5F5.toInt()
@@ -587,7 +595,7 @@ class DrivingStatusOverlayController(
 
     private var attached: Boolean = false
 
-    private var position: String = "bottom"
+    private var position: String = initialPosition
 
     private var isDarkTheme: Boolean = true
     private var bgColor: Int = COLOR_BG_DARK
@@ -595,15 +603,48 @@ class DrivingStatusOverlayController(
     private var textSecondaryColor: Int = COLOR_TEXT_DARK_SECONDARY
 
     init {
-        currentInstance?.destroy()
+        android.util.Log.w("DrivingStatusOverlay", ">>> INIT: Создание нового instance (позиция: $position)")
+        if (currentInstance != null) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> INIT: Найден предыдущий instance, уничтожаем...")
+            currentInstance?.destroy()
+        }
         currentInstance = this
+        android.util.Log.w("DrivingStatusOverlay", ">>> INIT: currentInstance обновлен")
     }
 
     fun setEnabled(isEnabled: Boolean) {
-        if (enabled == isEnabled) return
+        android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: вызван (текущее=$enabled, новое=$isEnabled)")
+        if (enabled == isEnabled) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: состояние не изменилось, return")
+            return
+        }
         enabled = isEnabled
         if (!enabled) {
-            destroy()
+            // КРИТИЧНО: НЕ вызываем destroy() чтобы сохранить currentInstance
+            // Просто удаляем view из WindowManager
+            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключаем (удаляем view, но сохраняем instance)")
+            val c = container
+            if (c != null) {
+                try {
+                    wm.removeView(c)
+                    android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: view удален")
+                } catch (e: Throwable) {
+                    android.util.Log.e("DrivingStatusOverlay", ">>> setEnabled: ошибка удаления view", e)
+                }
+            }
+            // Обнуляем ссылки на views, но НЕ обнуляем currentInstance
+            container = null
+            rootRow = null
+            tvMode = null
+            tvGear = null
+            tvSpeed = null
+            tvRange = null
+            tvTemps = null
+            tvTires = null
+            attached = false
+            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключено, но currentInstance сохранен")
+        } else {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: включено")
         }
     }
 
@@ -636,14 +677,33 @@ class DrivingStatusOverlayController(
     }
 
     fun setPosition(newPosition: String) {
-        if (position == newPosition && !attached) return
+        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: вызван (текущая=$position, новая=$newPosition)")
 
+        // Если позиция не изменилась - ничего не делаем
+        if (position == newPosition) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: позиция не изменилась, return")
+            return
+        }
+
+        // Сохраняем было ли прикреплено
         val wasAttached = attached
+        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: wasAttached=$wasAttached")
+
+        // Удаляем старый overlay если был (это обнулит currentInstance)
         destroy()
 
-        position = newPosition
+        // КРИТИЧНО: После destroy() снова регистрируем себя как currentInstance
+        // т.к. мы продолжаем использовать этот объект с новой позицией
+        currentInstance = this
+        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: currentInstance восстановлен")
 
+        // Обновляем позицию
+        position = newPosition
+        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: позиция обновлена на $position")
+
+        // Пересоздаем overlay в новой позиции только если был прикреплен
         if (wasAttached) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: пересоздаем overlay")
             ensureAttached()
         }
     }
@@ -694,8 +754,23 @@ class DrivingStatusOverlayController(
     }
 
     fun destroy() {
+        android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: вызван (attached=$attached, position=$position)")
         val c = container
 
+        // КРИТИЧНО: Удаляем view ДО обновления состояния
+        // Иначе другой поток может создать новый overlay между обнулением attached и удалением view
+        if (c != null) {
+            try {
+                android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: удаляем view из WindowManager")
+                wm.removeView(c)
+            } catch (e: Throwable) {
+                android.util.Log.e("DrivingStatusOverlay", ">>> DESTROY: ошибка удаления view", e)
+            }
+        } else {
+            android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: container уже null")
+        }
+
+        // Теперь обновляем состояние
         layoutParams = null
         container = null
         rootRow = null
@@ -707,30 +782,37 @@ class DrivingStatusOverlayController(
         tvTires = null
         attached = false
 
-        if (c != null) {
-            try {
-                wm.removeView(c)
-            } catch (_: Throwable) {
-            }
-        }
-
         if (currentInstance === this) {
             currentInstance = null
+            android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: currentInstance = null")
+        } else {
+            android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: WARNING - это не currentInstance!")
         }
     }
 
     private fun ensureAttached() {
-        if (attached && container != null && container?.windowToken != null) {
+        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: вызван (position=$position, attached=$attached, enabled=$enabled, container=$container)")
+
+        // КРИТИЧНО: Проверяем attached СНАЧАЛА, не проверяя windowToken
+        // windowToken может быть null сразу после addView, но это не значит что view не добавлен
+        if (attached && container != null) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: уже прикреплен (attached=true, container!=null), return")
             return
         }
 
-        if (!enabled) return
+        if (!enabled) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: не включен, return")
+            return
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !Settings.canDrawOverlays(appContext)
         ) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: нет разрешения, return")
             return
         }
+
+        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: СОЗДАЕМ overlay в позиции $position")
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -882,13 +964,16 @@ class DrivingStatusOverlayController(
 
         try {
             wm.addView(rootContainer, layoutParams ?: lp)
-        } catch (_: Throwable) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: overlay УСПЕШНО создан в позиции $position")
+        } catch (e: Throwable) {
+            android.util.Log.e("DrivingStatusOverlay", ">>> ensureAttached: ОШИБКА создания overlay", e)
             return
         }
 
         container = rootContainer
         rootRow = row
         attached = true
+        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: attached = true")
     }
 
     private fun getModeColor(mode: String?): Int {
