@@ -95,9 +95,9 @@
             </intent-filter>
         </activity>
 
-        <!-- ForegroundService, который слушает машину и управляет оверлеем (новая версия) -->
+        <!-- ForegroundService для мониторинга режимов вождения -->
         <service
-            android:name=".core.DriveModeServiceRefactored"
+            android:name=".core.DriveModeService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback|dataSync" />
 
@@ -125,20 +125,6 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
-
-        <!-- Ресивер для приёма тестовых/боевых триггеров режима -->
-        <!-- exported=true для возможности тестирования через ADB, защищено signature permission -->
-        <receiver
-            android:name=".core.TriggerReceiver"
-            android:enabled="true"
-            android:exported="true"
-            android:permission="android.permission.DUMP">
-            <intent-filter>
-                <action android:name="com.bjornfree.drivemode.TRIGGER" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </receiver>
-
     </application>
 
 </manifest>

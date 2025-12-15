@@ -68,4 +68,6 @@ dependencies {
     implementation("io.insert-koin:koin-android:3.5.3")
     implementation("io.insert-koin:koin-androidx-compose:3.5.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+
+    implementation(files("libs/adapter.api.jar"))
 }

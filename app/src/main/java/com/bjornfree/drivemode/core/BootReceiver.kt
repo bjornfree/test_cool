@@ -58,8 +58,8 @@ class StartServicesWorker(
 
     override fun doWork(): Result {
         return try {
-            // Стартуем сервис визуализации режима (новый рефакторированный)
-            val driveModeIntent = Intent(applicationContext, DriveModeServiceRefactored::class.java)
+            // Стартуем сервис визуализации режима
+            val driveModeIntent = Intent(applicationContext, DriveModeService::class.java)
             applicationContext.startForegroundService(driveModeIntent)
 
             // Стартуем сервис автоподогрева сидений
@@ -69,10 +69,10 @@ class StartServicesWorker(
             // Стартуем сервис мониторинга параметров автомобиля
             VehicleMetricsService.start(applicationContext)
 
-            DriveModeServiceRefactored.logConsole("BootReceiver: services started via WorkManager")
+            DriveModeService.logConsole("BootReceiver: services started via WorkManager")
             Result.success()
         } catch (e: Exception) {
-            DriveModeServiceRefactored.logConsole("BootReceiver: error starting services: ${e.javaClass.simpleName}: ${e.message}")
+            DriveModeService.logConsole("BootReceiver: error starting services: ${e.javaClass.simpleName}: ${e.message}")
             Result.failure()
         }
     }
@@ -94,47 +94,47 @@ class ServiceWatchdogWorker(
 
             // Проверяем AutoSeatHeatService
             if (!AutoSeatHeatService.isServiceRunning()) {
-                DriveModeServiceRefactored.logConsole("Watchdog: AutoSeatHeatService не работает, перезапускаем...")
+                DriveModeService.logConsole("Watchdog: AutoSeatHeatService не работает, перезапускаем...")
                 try {
                     AutoSeatHeatService.start(applicationContext)
-                    DriveModeServiceRefactored.logConsole("Watchdog: AutoSeatHeatService перезапущен успешно")
+                    DriveModeService.logConsole("Watchdog: AutoSeatHeatService перезапущен успешно")
                 } catch (e: Exception) {
-                    DriveModeServiceRefactored.logConsole("Watchdog: Не удалось перезапустить AutoSeatHeatService: ${e.message}")
+                    DriveModeService.logConsole("Watchdog: Не удалось перезапустить AutoSeatHeatService: ${e.message}")
                 }
             } else {
-                DriveModeServiceRefactored.logConsole("Watchdog: AutoSeatHeatService работает OK")
+                DriveModeService.logConsole("Watchdog: AutoSeatHeatService работает OK")
             }
 
-            // Проверяем DriveModeServiceRefactored
-            if (!DriveModeServiceRefactored.isRunning) {
-                DriveModeServiceRefactored.logConsole("Watchdog: DriveModeServiceRefactored не работает, перезапускаем...")
+            // Проверяем DriveModeService
+            if (!DriveModeService.isRunning) {
+                DriveModeService.logConsole("Watchdog: DriveModeService не работает, перезапускаем...")
                 try {
-                    val intent = Intent(applicationContext, DriveModeServiceRefactored::class.java)
+                    val intent = Intent(applicationContext, DriveModeService::class.java)
                     applicationContext.startForegroundService(intent)
-                    DriveModeServiceRefactored.logConsole("Watchdog: DriveModeServiceRefactored перезапущен успешно")
+                    DriveModeService.logConsole("Watchdog: DriveModeService перезапущен успешно")
                 } catch (e: Exception) {
-                    DriveModeServiceRefactored.logConsole("Watchdog: Не удалось перезапустить DriveModeServiceRefactored: ${e.message}")
+                    DriveModeService.logConsole("Watchdog: Не удалось перезапустить DriveModeService: ${e.message}")
                 }
             } else {
-                DriveModeServiceRefactored.logConsole("Watchdog: DriveModeServiceRefactored работает OK")
+                DriveModeService.logConsole("Watchdog: DriveModeService работает OK")
             }
 
             // Проверяем VehicleMetricsService
             if (!VehicleMetricsService.isServiceRunning()) {
-                DriveModeServiceRefactored.logConsole("Watchdog: VehicleMetricsService не работает, перезапускаем...")
+                DriveModeService.logConsole("Watchdog: VehicleMetricsService не работает, перезапускаем...")
                 try {
                     VehicleMetricsService.start(applicationContext)
-                    DriveModeServiceRefactored.logConsole("Watchdog: VehicleMetricsService перезапущен успешно")
+                    DriveModeService.logConsole("Watchdog: VehicleMetricsService перезапущен успешно")
                 } catch (e: Exception) {
-                    DriveModeServiceRefactored.logConsole("Watchdog: Не удалось перезапустить VehicleMetricsService: ${e.message}")
+                    DriveModeService.logConsole("Watchdog: Не удалось перезапустить VehicleMetricsService: ${e.message}")
                 }
             } else {
-                DriveModeServiceRefactored.logConsole("Watchdog: VehicleMetricsService работает OK")
+                DriveModeService.logConsole("Watchdog: VehicleMetricsService работает OK")
             }
 
             Result.success()
         } catch (e: Exception) {
-            DriveModeServiceRefactored.logConsole("Watchdog: ошибка проверки: ${e.javaClass.simpleName}: ${e.message}")
+            DriveModeService.logConsole("Watchdog: ошибка проверки: ${e.javaClass.simpleName}: ${e.message}")
             Result.retry()
         }
     }

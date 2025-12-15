@@ -1,6 +1,7 @@
 package com.bjornfree.drivemode.di
 
 import com.bjornfree.drivemode.data.car.CarPropertyManagerSingleton
+import com.bjornfree.drivemode.data.car.DriveModeMonitor
 import com.bjornfree.drivemode.data.preferences.PreferencesManager
 import com.bjornfree.drivemode.data.repository.*
 import com.bjornfree.drivemode.presentation.viewmodel.*
@@ -89,6 +90,18 @@ val appModule = module {
      */
     single {
         DriveModeRepository()
+    }
+
+    /**
+     * DriveModeMonitor - мониторинг режима вождения через Car API.
+     * ПРЕИМУЩЕСТВА над LogcatWatcher:
+     * - Прямое чтение из Car API (без парсинга логов)
+     * - Не требует root
+     * - Меньше задержка
+     * - Надежнее
+     */
+    single {
+        DriveModeMonitor(carManager = get())
     }
 
     // ========================================

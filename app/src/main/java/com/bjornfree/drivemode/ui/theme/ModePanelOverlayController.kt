@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -436,8 +437,7 @@ class ModePanelOverlayController(
                             lpNow.x = absoluteLeft.coerceAtLeast(0)
                         } else {
                             lpNow.gravity = Gravity.BOTTOM or Gravity.END
-                            val fromRight =
-                                (screenWidth - absoluteLeft - rootWidth).coerceAtLeast(0)
+                            val fromRight = (screenWidth - absoluteLeft - rootWidth).coerceAtLeast(0)
                             lpNow.x = fromRight
                         }
 
@@ -528,6 +528,40 @@ class DrivingStatusOverlayController(
         private const val LONG_PRESS_HIDE_TIMEOUT_MS = 1000L
         private const val TEMP_HIDE_DURATION_MS = 5000L
     }
+    private fun ensureMainThread() {
+        check(Looper.getMainLooper().thread == Thread.currentThread()) {
+            "DrivingStatusOverlayController must be used from Main thread"
+        }
+    }
+
+    /**
+     * Removes the overlay view from WindowManager and clears view references.
+     * Does NOT touch currentInstance.
+     */
+    private fun detachView() {
+        val c = container
+        if (c != null) {
+            try {
+                try {
+                    wm.removeView(c)
+                } catch (_: Throwable) {
+                    wm.removeViewImmediate(c)
+                }
+            } catch (_: Throwable) {
+            }
+        }
+
+        layoutParams = null
+        container = null
+        rootRow = null
+        tvMode = null
+        tvGear = null
+        tvSpeed = null
+        tvRange = null
+        tvTemps = null
+        tvTires = null
+        attached = false
+    }
     private fun hideTemporarily() {
         val c = container ?: return
 
@@ -613,6 +647,7 @@ class DrivingStatusOverlayController(
     }
 
     fun setEnabled(isEnabled: Boolean) {
+        ensureMainThread()
         android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: вызван (текущее=$enabled, новое=$isEnabled)")
         if (enabled == isEnabled) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: состояние не изменилось, return")
@@ -620,28 +655,8 @@ class DrivingStatusOverlayController(
         }
         enabled = isEnabled
         if (!enabled) {
-            // КРИТИЧНО: НЕ вызываем destroy() чтобы сохранить currentInstance
-            // Просто удаляем view из WindowManager
-            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключаем (удаляем view, но сохраняем instance)")
-            val c = container
-            if (c != null) {
-                try {
-                    wm.removeView(c)
-                    android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: view удален")
-                } catch (e: Throwable) {
-                    android.util.Log.e("DrivingStatusOverlay", ">>> setEnabled: ошибка удаления view", e)
-                }
-            }
-            // Обнуляем ссылки на views, но НЕ обнуляем currentInstance
-            container = null
-            rootRow = null
-            tvMode = null
-            tvGear = null
-            tvSpeed = null
-            tvRange = null
-            tvTemps = null
-            tvTires = null
-            attached = false
+            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключаем (detach view, instance сохраняем)")
+            detachView()
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключено, но currentInstance сохранен")
         } else {
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: включено")
@@ -649,11 +664,13 @@ class DrivingStatusOverlayController(
     }
 
     fun ensureVisible() {
+        ensureMainThread()
         if (!enabled) return
         ensureAttached()
     }
 
     fun setDarkTheme(dark: Boolean) {
+        ensureMainThread()
         if (isDarkTheme == dark) return
 
         isDarkTheme = dark
@@ -677,31 +694,23 @@ class DrivingStatusOverlayController(
     }
 
     fun setPosition(newPosition: String) {
+        ensureMainThread()
         android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: вызван (текущая=$position, новая=$newPosition)")
 
-        // Если позиция не изменилась - ничего не делаем
         if (position == newPosition) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: позиция не изменилась, return")
             return
         }
 
-        // Сохраняем было ли прикреплено
         val wasAttached = attached
         android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: wasAttached=$wasAttached")
 
-        // Удаляем старый overlay если был (это обнулит currentInstance)
-        destroy()
+        // Detach existing view (do NOT destroy instance)
+        detachView()
 
-        // КРИТИЧНО: После destroy() снова регистрируем себя как currentInstance
-        // т.к. мы продолжаем использовать этот объект с новой позицией
-        currentInstance = this
-        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: currentInstance восстановлен")
-
-        // Обновляем позицию
         position = newPosition
         android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: позиция обновлена на $position")
 
-        // Пересоздаем overlay в новой позиции только если был прикреплен
         if (wasAttached) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: пересоздаем overlay")
             ensureAttached()
@@ -709,6 +718,7 @@ class DrivingStatusOverlayController(
     }
 
     fun updateStatus(state: DrivingStatusOverlayState) {
+        ensureMainThread()
         if (!enabled) return
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
@@ -717,18 +727,11 @@ class DrivingStatusOverlayController(
             return
         }
 
-        // Проверяем что container жив - если windowToken null, значит view был уничтожен
-        if (container != null && container?.windowToken == null) {
-            // Container был уничтожен (например при закрытии приложения), очищаем состояние
-            attached = false
-            container = null
-            rootRow = null
-            tvMode = null
-            tvGear = null
-            tvSpeed = null
-            tvRange = null
-            tvTemps = null
-            tvTires = null
+        // Если windowToken == null, view мог стать "сиротой" (процесс/окно пересоздалось),
+        // но сам overlay может оставаться в WindowManager. Сначала пробуем удалить.
+        val orphan = container
+        if (orphan != null && orphan.windowToken == null) {
+            detachView()
         }
 
         try {
@@ -754,33 +757,9 @@ class DrivingStatusOverlayController(
     }
 
     fun destroy() {
+        ensureMainThread()
         android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: вызван (attached=$attached, position=$position)")
-        val c = container
-
-        // КРИТИЧНО: Удаляем view ДО обновления состояния
-        // Иначе другой поток может создать новый overlay между обнулением attached и удалением view
-        if (c != null) {
-            try {
-                android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: удаляем view из WindowManager")
-                wm.removeView(c)
-            } catch (e: Throwable) {
-                android.util.Log.e("DrivingStatusOverlay", ">>> DESTROY: ошибка удаления view", e)
-            }
-        } else {
-            android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: container уже null")
-        }
-
-        // Теперь обновляем состояние
-        layoutParams = null
-        container = null
-        rootRow = null
-        tvMode = null
-        tvGear = null
-        tvSpeed = null
-        tvRange = null
-        tvTemps = null
-        tvTires = null
-        attached = false
+        detachView()
 
         if (currentInstance === this) {
             currentInstance = null

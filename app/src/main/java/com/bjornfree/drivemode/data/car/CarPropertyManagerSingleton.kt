@@ -7,18 +7,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Singleton для управления единственным instance CarPropertyManager.
- *
- * КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ:
- * - Заменяет 3 отдельных instance (из DriveModeService, AutoHeaterService, VehicleMetricsService)
- * - Кэширует reflection Method objects (~10x быстрее)
- * - Thread-safe доступ к Car API
- * - Автоматическое переподключение при ошибках
- *
- * Улучшение производительности:
- * - Startup время: -60% (reflect один раз вместо трех)
- * - Memory: -66% (1 instance вместо 3)
- * - CPU: -80% на reflection lookups (кэширование методов)
- *
  * @param context Application context для создания Car instance
  */
 class CarPropertyManagerSingleton(private val context: Context) {
@@ -236,6 +224,181 @@ class CarPropertyManagerSingleton(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to read float property 0x${Integer.toHexString(propertyId)}", e)
             null
+        }
+    }
+
+    /**
+     * Записывает Int property в CarPropertyManager.
+     *
+     * @param propertyId ID свойства
+     * @param areaId area ID (по умолчанию 0)
+     * @param value значение для записи
+     * @return true если запись успешна
+     */
+    fun writeIntProperty(propertyId: Int, value: Int, areaId: Int = 0): Boolean {
+        if (!ensureInitialized()) {
+            return false
+        }
+
+        return try {
+            val method = getCachedOrCreateMethod(
+                "setIntProperty",
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!
+            )
+            method?.invoke(managerInstance, propertyId, areaId, value)
+            Log.d(TAG, "Set int property 0x${Integer.toHexString(propertyId)} = $value")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write int property 0x${Integer.toHexString(propertyId)}", e)
+            false
+        }
+    }
+
+    /**
+     * Записывает Float property в CarPropertyManager.
+     *
+     * @param propertyId ID свойства
+     * @param areaId area ID (по умолчанию 0)
+     * @param value значение для записи
+     * @return true если запись успешна
+     */
+    fun writeFloatProperty(propertyId: Int, value: Float, areaId: Int = 0): Boolean {
+        if (!ensureInitialized()) {
+            return false
+        }
+
+        return try {
+            val method = getCachedOrCreateMethod(
+                "setFloatProperty",
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+                Float::class.javaPrimitiveType!!
+            )
+            method?.invoke(managerInstance, propertyId, areaId, value)
+            Log.d(TAG, "Set float property 0x${Integer.toHexString(propertyId)} = $value")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write float property 0x${Integer.toHexString(propertyId)}", e)
+            false
+        }
+    }
+
+    /**
+     * Получает закэшированный Method или создает новый.
+     * Улучшенная версия getCachedMethod с автоматическим кэшированием.
+     */
+    private fun getCachedOrCreateMethod(methodName: String, vararg parameterTypes: Class<*>): Method? {
+        val cacheKey = methodName
+        return methodCache.getOrPut(cacheKey) {
+            try {
+                managerClass!!.getMethod(methodName, *parameterTypes)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get method: $methodName", e)
+                null
+            }
+        } as? Method
+    }
+
+    /**
+     * Регистрирует callback для отслеживания изменений свойства.
+     *
+     * @param propertyId ID свойства для мониторинга
+     * @param areaId area ID (по умолчанию 0)
+     * @param callback функция которая будет вызвана при изменении (получает Int значение)
+     * @return listener object который нужно сохранить для отписки, или null при ошибке
+     */
+    fun registerIntPropertyCallback(
+        propertyId: Int,
+        areaId: Int = 0,
+        callback: (Int) -> Unit
+    ): Any? {
+        if (!ensureInitialized()) {
+            return null
+        }
+
+        return try {
+            // Загружаем CarPropertyEventCallback class
+            val callbackClass = Class.forName("android.car.hardware.property.CarPropertyManager\$CarPropertyEventCallback")
+
+            // Создаем dynamic proxy для реализации callback
+            val callbackProxy = java.lang.reflect.Proxy.newProxyInstance(
+                callbackClass.classLoader,
+                arrayOf(callbackClass)
+            ) { proxy, method, args ->
+                when (method.name) {
+                    "onChangeEvent" -> {
+                        // Вызывается при изменении свойства
+                        val event = args?.getOrNull(0)
+                        if (event != null) {
+                            try {
+                                // Извлекаем значение из CarPropertyValue
+                                val valueMethod = event.javaClass.getMethod("getValue")
+                                val value = valueMethod.invoke(event) as? Int
+                                if (value != null) {
+                                    callback(value)
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error in onChangeEvent callback", e)
+                            }
+                        }
+                        null
+                    }
+                    "onErrorEvent" -> {
+                        // Игнорируем ошибки
+                        null
+                    }
+                    "hashCode" -> {
+                        // HashMap требует hashCode для хранения callback
+                        System.identityHashCode(proxy)
+                    }
+                    "equals" -> {
+                        // Сравнение объектов по ссылке
+                        val other = args?.getOrNull(0)
+                        proxy === other
+                    }
+                    "toString" -> {
+                        "CarPropertyCallback@${Integer.toHexString(System.identityHashCode(proxy))}"
+                    }
+                    else -> null
+                }
+            }
+
+            // Регистрируем callback через registerCallback
+            val registerMethod = managerClass!!.getMethod(
+                "registerCallback",
+                callbackClass,
+                Int::class.javaPrimitiveType,
+                Float::class.javaPrimitiveType
+            )
+            registerMethod.invoke(managerInstance, callbackProxy, propertyId, 0f)
+
+            Log.d(TAG, "Registered callback for property 0x${Integer.toHexString(propertyId)}")
+            callbackProxy
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register callback for property 0x${Integer.toHexString(propertyId)}", e)
+            null
+        }
+    }
+
+    /**
+     * Отменяет регистрацию callback.
+     *
+     * @param listener object, возвращенный из registerIntPropertyCallback
+     */
+    fun unregisterCallback(listener: Any?) {
+        if (listener == null || !ensureInitialized()) {
+            return
+        }
+
+        try {
+            val callbackClass = Class.forName("android.car.hardware.property.CarPropertyManager\$CarPropertyEventCallback")
+            val unregisterMethod = managerClass!!.getMethod("unregisterCallback", callbackClass)
+            unregisterMethod.invoke(managerInstance, listener)
+            Log.d(TAG, "Unregistered callback")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to unregister callback", e)
         }
     }
 

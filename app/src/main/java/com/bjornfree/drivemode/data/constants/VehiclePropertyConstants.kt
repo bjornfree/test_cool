@@ -164,6 +164,20 @@ object VehiclePropertyConstants {
      */
     const val NIGHT_MODE = 0x11400501
 
+    /**
+     * DRIVE_MODE: Режим вождения (ECARX/Geely)
+     * Property ID: 570491136 (0x22006100)
+     *
+     * Значения:
+     * - 570491137 (0x22006101): Eco
+     * - 570491138 (0x22006102): Comfort
+     * - 570491139 (0x22006103): Sport
+     * - 570491201 (0x22006141): Adaptive
+     *
+     * Источник: рабочий код с ECARX API
+     */
+    const val DRIVE_MODE = 570491136  // 0x22006100
+
     // ========================================
     // Area IDs для multi-zone properties
     // ========================================
@@ -175,7 +189,7 @@ object VehiclePropertyConstants {
     val AREA_IDS = listOf(0, 1, 2)
 
     // ========================================
-    // Gear Selection маппинг
+    // Маппинг значений свойств
     // ========================================
 
     /**
@@ -206,6 +220,21 @@ object VehiclePropertyConstants {
         256 -> "5"    // Manual 5th
         512 -> "6"    // Manual 6th
         else -> "?"   // Unknown
+    }
+
+    /**
+     * Маппинг кодов режимов вождения в строки.
+     * Значения из ECARX/Geely Factory API.
+     *
+     * @param modeCode полный код режима от Car API
+     * @return строка режима или null если неизвестен
+     */
+    fun driveModeToString(modeCode: Int): String? = when (modeCode) {
+        570491137 -> "eco"        // 0x22006101 - Eco mode
+        570491138 -> "comfort"    // 0x22006102 - Comfort/Normal mode
+        570491139 -> "sport"      // 0x22006103 - Sport mode
+        570491201 -> "adaptive"   // 0x22006141 - Adaptive mode
+        else -> null              // Unknown or invalid
     }
 
     // ========================================

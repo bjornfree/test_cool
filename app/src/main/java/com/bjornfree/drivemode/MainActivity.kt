@@ -67,7 +67,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.bjornfree.drivemode.core.DriveModeService
-import com.bjornfree.drivemode.core.DriveModeServiceRefactored
 import com.bjornfree.drivemode.data.preferences.PreferencesManager
 import com.bjornfree.drivemode.ui.theme.DriveModeTheme
 import kotlinx.coroutines.Dispatchers
@@ -90,11 +89,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Стартуем ForegroundService'ы, чтобы при открытии приложения всё сразу работало
         try {
-            startForegroundService(Intent(this, DriveModeServiceRefactored::class.java))
+            startForegroundService(Intent(this, DriveModeService::class.java))
             startForegroundService(Intent(this, AutoSeatHeatService::class.java))
             startForegroundService(Intent(this, VehicleMetricsService::class.java))
         } catch (_: IllegalStateException) {
-            startService(Intent(this, DriveModeServiceRefactored::class.java))
+            startService(Intent(this, DriveModeService::class.java))
             startService(Intent(this, AutoSeatHeatService::class.java))
             startService(Intent(this, VehicleMetricsService::class.java))
         }
@@ -132,9 +131,9 @@ class MainActivity : ComponentActivity() {
                 watchdogWork
             )
 
-            DriveModeServiceRefactored.logConsole("MainActivity: ServiceWatchdog scheduled (periodic 15 min)")
+            DriveModeService.logConsole("MainActivity: ServiceWatchdog scheduled (periodic 15 min)")
         } catch (e: Exception) {
-            DriveModeServiceRefactored.logConsole("MainActivity: Failed to schedule watchdog: ${e.message}")
+            DriveModeService.logConsole("MainActivity: Failed to schedule watchdog: ${e.message}")
         }
     }
 }
