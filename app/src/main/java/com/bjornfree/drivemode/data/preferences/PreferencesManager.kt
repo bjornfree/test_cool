@@ -190,25 +190,27 @@ class PreferencesManager(context: Context) {
 
     /**
      * Включен ли border overlay при смене режимов.
+     * По умолчанию false - требует явного включения пользователем.
      */
     var borderEnabled: Boolean
-        get() = prefs.getBoolean(KEY_BORDER_ENABLED, true)
+        get() = prefs.getBoolean(KEY_BORDER_ENABLED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_BORDER_ENABLED, value).apply()
         }
 
     /**
      * Включен ли panel overlay при смене режимов.
+     * По умолчанию false - требует явного включения пользователем.
      */
     var panelEnabled: Boolean
-        get() = prefs.getBoolean(KEY_PANEL_ENABLED, true)
+        get() = prefs.getBoolean(KEY_PANEL_ENABLED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_PANEL_ENABLED, value).apply()
         }
 
     /**
      * Включена ли нижняя полоска с метриками автомобиля.
-     * По умолчанию true - отображается всегда.
+     * По умолчанию false - требует явного включения пользователем.
      */
     var metricsBarEnabled: Boolean
         get() = prefs.getBoolean(KEY_METRICS_BAR_ENABLED, false)

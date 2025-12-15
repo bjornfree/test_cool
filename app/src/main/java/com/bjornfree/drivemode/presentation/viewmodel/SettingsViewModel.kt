@@ -2,10 +2,15 @@ package com.bjornfree.drivemode.presentation.viewmodel
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.bjornfree.drivemode.data.preferences.PreferencesManager
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * ViewModel для SettingsTab (Настройки).
@@ -15,6 +20,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * - Border overlay (включен/выключен)
  * - Panel overlay (включен/выключен)
  * - Статистика запусков
+ *
+ * РЕАКТИВНОСТЬ: ViewModel подписывается на изменения настроек из PreferencesManager
+ * через Flow, что позволяет UI автоматически обновляться при изменениях из сервиса.
  *
  * @param context Application context для проверки permissions
  * @param prefsManager для сохранения настроек
@@ -26,30 +34,35 @@ class SettingsViewModel(
 
     /**
      * Demo mode (для тестирования без автомобиля).
+     * РЕАКТИВНО подписан на demoModeFlow.
      */
     private val _demoMode = MutableStateFlow(prefsManager.demoMode)
     val demoMode: StateFlow<Boolean> = _demoMode.asStateFlow()
 
     /**
      * Border overlay включен.
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
      */
     private val _borderEnabled = MutableStateFlow(prefsManager.borderEnabled)
     val borderEnabled: StateFlow<Boolean> = _borderEnabled.asStateFlow()
 
     /**
      * Panel overlay включен.
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
      */
     private val _panelEnabled = MutableStateFlow(prefsManager.panelEnabled)
     val panelEnabled: StateFlow<Boolean> = _panelEnabled.asStateFlow()
 
     /**
      * Нижняя полоска метрик включена.
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
      */
     private val _metricsBarEnabled = MutableStateFlow(prefsManager.metricsBarEnabled)
     val metricsBarEnabled: StateFlow<Boolean> = _metricsBarEnabled.asStateFlow()
 
     /**
      * Положение полоски метрик ("bottom" или "top").
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
      */
     private val _metricsBarPosition = MutableStateFlow(prefsManager.metricsBarPosition)
     val metricsBarPosition: StateFlow<String> = _metricsBarPosition.asStateFlow()
@@ -65,9 +78,44 @@ class SettingsViewModel(
      * "auto" = следует системной теме (по умолчанию)
      * "light" = всегда светлая тема
      * "dark" = всегда темная тема
+     * РЕАКТИВНО подписан на themeModeFlow.
      */
     private val _themeMode = MutableStateFlow(prefsManager.themeMode)
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
+    /**
+     * События для показа сообщений пользователю (например Toast).
+     */
+    private val _showMessage = MutableSharedFlow<String>()
+    val showMessage: SharedFlow<String> = _showMessage.asSharedFlow()
+
+    init {
+        // РЕАКТИВНАЯ подписка на изменения overlay настроек из PreferencesManager
+        // Если сервис изменит настройки (например, сбросит при отсутствии разрешения)
+        // UI автоматически обновится
+        viewModelScope.launch {
+            prefsManager.overlaySettingsFlow.collect { settings ->
+                _borderEnabled.value = settings.borderEnabled
+                _panelEnabled.value = settings.panelEnabled
+                _metricsBarEnabled.value = settings.metricsBarEnabled
+                _metricsBarPosition.value = settings.metricsBarPosition
+            }
+        }
+
+        // РЕАКТИВНАЯ подписка на изменения темы
+        viewModelScope.launch {
+            prefsManager.themeModeFlow.collect { theme ->
+                _themeMode.value = theme
+            }
+        }
+
+        // РЕАКТИВНАЯ подписка на изменения demo mode
+        viewModelScope.launch {
+            prefsManager.demoModeFlow.collect { demo ->
+                _demoMode.value = demo
+            }
+        }
+    }
 
     /**
      * Переключает demo mode.
@@ -99,10 +147,19 @@ class SettingsViewModel(
 
     /**
      * Устанавливает border overlay.
+     * Проверяет разрешение перед включением.
      *
      * @param enabled true для включения border
      */
     fun setBorderEnabled(enabled: Boolean) {
+        // Если включаем - проверяем разрешение
+        if (enabled && !hasSystemAlertWindowPermission()) {
+            // Разрешения нет - показываем сообщение и не включаем
+            viewModelScope.launch {
+                _showMessage.emit("Требуется разрешение на отображение поверх других окон")
+            }
+            return
+        }
         prefsManager.borderEnabled = enabled
         _borderEnabled.value = enabled
     }
@@ -112,16 +169,23 @@ class SettingsViewModel(
      */
     fun togglePanelOverlay() {
         val newValue = !_panelEnabled.value
-        prefsManager.panelEnabled = newValue
-        _panelEnabled.value = newValue
+        setPanelEnabled(newValue)
     }
 
     /**
      * Устанавливает panel overlay.
+     * Проверяет разрешение перед включением.
      *
      * @param enabled true для включения panel
      */
     fun setPanelEnabled(enabled: Boolean) {
+        // Если включаем - проверяем разрешение
+        if (enabled && !hasSystemAlertWindowPermission()) {
+            viewModelScope.launch {
+                _showMessage.emit("Требуется разрешение на отображение поверх других окон")
+            }
+            return
+        }
         prefsManager.panelEnabled = enabled
         _panelEnabled.value = enabled
     }
@@ -131,16 +195,23 @@ class SettingsViewModel(
      */
     fun toggleMetricsBar() {
         val newValue = !_metricsBarEnabled.value
-        prefsManager.metricsBarEnabled = newValue
-        _metricsBarEnabled.value = newValue
+        setMetricsBarEnabled(newValue)
     }
 
     /**
      * Устанавливает отображение нижней полоски метрик.
+     * Проверяет разрешение перед включением.
      *
      * @param enabled true для включения полоски
      */
     fun setMetricsBarEnabled(enabled: Boolean) {
+        // Если включаем - проверяем разрешение
+        if (enabled && !hasSystemAlertWindowPermission()) {
+            viewModelScope.launch {
+                _showMessage.emit("Требуется разрешение на отображение поверх других окон")
+            }
+            return
+        }
         prefsManager.metricsBarEnabled = enabled
         _metricsBarEnabled.value = enabled
     }
@@ -170,9 +241,9 @@ class SettingsViewModel(
      */
     fun resetToDefaults() {
         setDemoMode(false)
-        setBorderEnabled(true)
-        setPanelEnabled(true)
-        setMetricsBarEnabled(true)
+        setBorderEnabled(false)  // По умолчанию выключен
+        setPanelEnabled(false)   // По умолчанию выключен
+        setMetricsBarEnabled(false)  // По умолчанию выключен
         setThemeMode("auto")
     }
 
@@ -181,11 +252,8 @@ class SettingsViewModel(
      */
     fun clearAllData() {
         prefsManager.clearAll()
-        _demoMode.value = false
-        _borderEnabled.value = true
-        _panelEnabled.value = true
-        _metricsBarEnabled.value = true
-        _launchCount.value = 0
+        // Значения обновятся автоматически через реактивные подписки
+        // Не нужно вручную устанавливать _*.value
     }
 
     /**

@@ -229,10 +229,10 @@ class DriveModeServiceRefactored : Service() {
         vehicleMetricsRepo.startMonitoring()
         log("Метрики: мониторинг запущен")
 
-        // Подписываемся на изменения темы
+        // РЕАКТИВНАЯ подписка на изменения темы (без polling!)
         themeMonitorJob = scope.launch {
-            while (isActive) {
-                val isDark = when (prefsManager.themeMode) {
+            prefsManager.themeModeFlow.collect { themeMode ->
+                val isDark = when (themeMode) {
                     "dark" -> true
                     "light" -> false
                     else -> {
@@ -243,7 +243,7 @@ class DriveModeServiceRefactored : Service() {
                     }
                 }
                 drivingStatusOverlay.setDarkTheme(isDark)
-                delay(1000) // Проверяем тему каждую секунду
+                log("Тема: ${themeMode} (dark=${isDark})")
             }
         }
 
@@ -254,7 +254,6 @@ class DriveModeServiceRefactored : Service() {
             var lastMetricsBarPosition = ""
             var lastBorderEnabled = false
             var lastPanelEnabled = false
-            var lastHasOverlayPermission = Settings.canDrawOverlays(applicationContext)
 
             // Подписываемся на изменения настроек через Flow
             prefsManager.overlaySettingsFlow.collect { settings ->
@@ -274,19 +273,14 @@ class DriveModeServiceRefactored : Service() {
 
                 if (settings.metricsBarEnabled != lastMetricsBarEnabled || isFirstCollect) {
                     if (settings.metricsBarEnabled) {
-                        // Включаем overlay
+                        // Включаем overlay (разрешение уже проверено выше)
                         DrivingStatusOverlayController.getInstance()?.setEnabled(true)
-
-                        if (hasOverlayPermission) {
-                            try {
-                                // Теперь ensureVisible создаст overlay в ПРАВИЛЬНОЙ позиции
-                                DrivingStatusOverlayController.getInstance()?.ensureVisible()
-                                log("Metrics bar: включена (позиция: ${settings.metricsBarPosition})")
-                            } catch (e: Exception) {
-                                log("Ошибка отображения metrics bar: ${e.message}")
-                            }
-                        } else {
-                            log("Metrics bar: включена в настройках, но нет разрешения на overlay")
+                        try {
+                            // Теперь ensureVisible создаст overlay в ПРАВИЛЬНОЙ позиции
+                            DrivingStatusOverlayController.getInstance()?.ensureVisible()
+                            log("Metrics bar: включена (позиция: ${settings.metricsBarPosition})")
+                        } catch (e: Exception) {
+                            log("Ошибка отображения metrics bar: ${e.message}")
                         }
                     } else {
                         // Выключаем overlay только если он был включен
@@ -318,69 +312,11 @@ class DriveModeServiceRefactored : Service() {
                     lastPanelEnabled = settings.panelEnabled
                 }
 
-                // ========== OVERLAY PERMISSION CHANGE ==========
-
-                if (hasOverlayPermission != lastHasOverlayPermission) {
-                    if (hasOverlayPermission) {
-                        // Разрешение только что выдано
-                        if (settings.metricsBarEnabled) {
-                            try {
-                                DrivingStatusOverlayController.getInstance()?.ensureVisible()
-                                log("Metrics bar: показана после выдачи разрешения")
-                            } catch (e: Exception) {
-                                log("Ошибка отображения metrics bar после выдачи разрешения: ${e.message}")
-                            }
-                        }
-                    } else {
-                        // Разрешение отозвано
-                        try {
-                            DrivingStatusOverlayController.getInstance()?.destroy()
-                            log("Metrics bar: скрыта из-за отсутствия разрешения")
-                        } catch (e: Exception) {
-                            log("Ошибка при скрытии metrics bar после отзыва разрешения: ${e.message}")
-                        }
-                    }
-                    lastHasOverlayPermission = hasOverlayPermission
-                }
-
                 // Сбрасываем флаг первого вызова в конце
                 isFirstCollect = false
             }
         }
 
-        // КРИТИЧНО: Отдельный мониторинг разрешения overlay
-        // Проверяет изменение системного разрешения каждые 5 секунд
-        scope.launch {
-            while (isActive) {
-                delay(5000) // Проверяем каждые 5 секунд (не часто, но регулярно)
-
-                val hasOverlayPermission = Settings.canDrawOverlays(applicationContext)
-                val currentMetricsBarEnabled = prefsManager.metricsBarEnabled
-
-                // Проверяем изменение разрешения (без зависимости от настроек приложения)
-                // Сравниваем с последним известным значением из overlaySettingsMonitorJob
-                if (hasOverlayPermission) {
-                    // Разрешение есть - если полоска включена, убеждаемся что она видима
-                    if (currentMetricsBarEnabled) {
-                        try {
-                            drivingStatusOverlay.ensureVisible()
-                        } catch (_: Throwable) {
-                            // Игнорируем ошибки - overlay может быть уже видим
-                        }
-                    }
-                } else {
-                    // Разрешения нет - убеждаемся что overlay удален
-                    try {
-                        if (drivingStatusOverlay.toString().contains("attached")) {
-                            drivingStatusOverlay.destroy()
-                            log("Metrics bar: удалена из-за отсутствия разрешения (периодическая проверка)")
-                        }
-                    } catch (_: Throwable) {
-                        // Игнорируем ошибки
-                    }
-                }
-            }
-        }
 
         // Подписка на метрики автомобиля для обновления нижней полосы статуса
         statusOverlayJob = scope.launch {
@@ -475,8 +411,8 @@ class DriveModeServiceRefactored : Service() {
             }
         }
 
+        // Проверяем разрешения только для логирования (не открываем диалоги автоматически)
         ensureOverlayPermissionTip()
-        ensureKeepAliveWhitelist()
     }
 
     /**

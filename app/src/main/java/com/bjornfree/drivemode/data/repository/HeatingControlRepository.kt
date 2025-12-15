@@ -86,20 +86,22 @@ class HeatingControlRepository(
         metricsRepo.startMonitoring()
 
         controlJob = scope.launch {
-            // Комбинируем потоки зажигания и метрик
+            // РЕАКТИВНО комбинируем потоки зажигания, метрик И настроек подогрева
+            // Теперь любое изменение настроек мгновенно применяется без polling!
             combine(
                 ignitionRepo.ignitionState,
-                metricsRepo.vehicleMetrics
-            ) { ignition, metrics ->
-                Pair(ignition, metrics)
-            }.collect { (ignition, metrics) ->
+                metricsRepo.vehicleMetrics,
+                prefsManager.seatHeatingSettingsFlow
+            ) { ignition, metrics, settings ->
+                Triple(ignition, metrics, settings)
+            }.collect { (ignition, metrics, settings) ->
 
-                val currentMode = HeatingMode.fromKey(prefsManager.seatAutoHeatMode)
-                val isAdaptive = prefsManager.adaptiveHeating
-                val threshold = prefsManager.temperatureThreshold
-                val checkOnce = prefsManager.checkTempOnceOnStartup
-                val autoOffTimerMinutes = prefsManager.autoOffTimerMinutes
-                val temperatureSource = prefsManager.temperatureSource
+                val currentMode = HeatingMode.fromKey(settings.seatAutoHeatMode)
+                val isAdaptive = settings.adaptiveHeating
+                val threshold = settings.temperatureThreshold
+                val checkOnce = settings.checkTempOnceOnStartup
+                val autoOffTimerMinutes = settings.autoOffTimerMinutes
+                val temperatureSource = settings.temperatureSource
 
                 // Выбираем источник температуры
                 val tempToCheck = if (temperatureSource == "ambient") {
@@ -233,7 +235,7 @@ class HeatingControlRepository(
                         else -> 0
                     }
                 } else {
-                    prefsManager.heatingLevel
+                    settings.heatingLevel
                 }
 
                 // Проверяем изменилось ли решение
@@ -264,7 +266,7 @@ class HeatingControlRepository(
                         isActive = shouldBeActive,
                         mode = currentMode,
                         adaptiveHeating = isAdaptive,
-                        heatingLevel = prefsManager.heatingLevel,
+                        heatingLevel = settings.heatingLevel,
                         reason = reason,
                         currentTemp = tempToCheck ?: cabinTemp,
                         temperatureThreshold = threshold,

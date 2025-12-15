@@ -229,6 +229,13 @@ fun SettingsTab(viewModel: SettingsViewModel) {
         }
     }
 
+    // Слушаем события показа сообщений из ViewModel
+    LaunchedEffect(Unit) {
+        viewModel.showMessage.collect { message ->
+            android.widget.Toast.makeText(ctx, message, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
