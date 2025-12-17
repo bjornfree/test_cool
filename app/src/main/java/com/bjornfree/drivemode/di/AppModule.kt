@@ -152,12 +152,13 @@ val appModule = module {
 
     /**
      * SettingsViewModel - для SettingsTab (Настройки).
-     * Управление настройками приложения.
+     * Управление настройками приложения и режима вождения.
      */
     viewModel {
         SettingsViewModel(
             context = androidContext(),
-            prefsManager = get()
+            prefsManager = get(),
+            carPropertyManager = get()
         )
     }
 }

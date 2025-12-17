@@ -60,6 +60,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.bjornfree.drivemode.data.constants.DriveMode
 
 /**
  * Современный UI для планшета 14" с Material Design 3.
@@ -212,6 +213,8 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     val metricsBarEnabled by viewModel.metricsBarEnabled.collectAsState()
     val metricsBarPosition by viewModel.metricsBarPosition.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
+    val autoDriveModeEnabled by viewModel.autoDriveModeEnabled.collectAsState()
+    val selectedDriveMode by viewModel.selectedDriveMode.collectAsState()
 
     // Локальные состояния для разрешений (проверяются периодически)
     var overlayGranted by remember { mutableStateOf(viewModel.hasSystemAlertWindowPermission()) }
@@ -303,9 +306,119 @@ fun SettingsTab(viewModel: SettingsViewModel) {
             }
         }
 
+        // Автоустановка режима вождения
+        Text(
+            "Автоустановка режима вождения",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        // Чекбокс включения автоустановки
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Устанавливать режим при старте",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Автоматически устанавливать выбранный режим при включении зажигания",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = autoDriveModeEnabled,
+                    onCheckedChange = { viewModel.setAutoDriveModeEnabled(it) }
+                )
+            }
+        }
+
+        // Выбор режима
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "Режим вождения",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Создаем кнопки для всех доступных режимов
+                    DriveMode.selectableModes.forEach { mode ->
+                        FilterChip(
+                            selected = selectedDriveMode == mode.ecarxCode,
+                            onClick = { viewModel.setSelectedDriveMode(mode.ecarxCode) },
+                            label = { Text(mode.displayName) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // Описание выбранного режима
+                val currentMode = DriveMode.fromECarXCode(selectedDriveMode)
+                Text(
+                    text = if (currentMode.isValid()) {
+                        "Режим ${currentMode.displayName} - ${currentMode.description}"
+                    } else {
+                        "Выберите режим вождения"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Кнопка принудительного применения
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "Применить режим",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Принудительно установить выбранный режим вождения прямо сейчас",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val selectedMode = DriveMode.fromECarXCode(selectedDriveMode)
+                Button(
+                    onClick = { viewModel.applyDriveMode() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Установить режим ${selectedMode.displayName}")
+                }
+            }
+        }
+
         // Оверлеи и интерфейс
         Text(
-            "Оверлеи и интерфейс",
+            "ёОверлеи и интерфейс",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold
         )

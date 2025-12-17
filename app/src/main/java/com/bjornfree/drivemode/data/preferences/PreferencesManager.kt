@@ -2,6 +2,7 @@ package com.bjornfree.drivemode.data.preferences
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.bjornfree.drivemode.data.constants.DriveMode
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -43,6 +44,8 @@ class PreferencesManager(context: Context) {
         private const val KEY_METRICS_BAR_ENABLED = "metrics_bar_enabled"
         private const val KEY_METRICS_BAR_POSITION = "metrics_bar_position"
         private const val KEY_DEMO_MODE = "demo_mode"
+        private const val KEY_AUTO_DRIVE_MODE_ENABLED = "auto_drive_mode_enabled"
+        private const val KEY_SELECTED_DRIVE_MODE = "selected_drive_mode"
     }
 
     private val prefs: SharedPreferences =
@@ -238,6 +241,31 @@ class PreferencesManager(context: Context) {
             prefs.edit().putBoolean(KEY_DEMO_MODE, value).apply()
         }
 
+    // ========================================
+    // Drive Mode Auto-Selection Settings
+    // ========================================
+
+    /**
+     * Автоматически устанавливать режим вождения при старте авто.
+     * По умолчанию false - требует явного включения пользователем.
+     */
+    var autoDriveModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_DRIVE_MODE_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_DRIVE_MODE_ENABLED, value).apply()
+        }
+
+    /**
+     * Выбранный режим вождения для автоустановки.
+     * Возможные значения см. в DriveMode enum (DriveModeConstants.kt).
+     * По умолчанию DriveMode.SPORT.
+     */
+    var selectedDriveMode: Int
+        get() = prefs.getInt(KEY_SELECTED_DRIVE_MODE, DriveMode.SPORT.ecarxCode)
+        set(value) {
+            prefs.edit().putInt(KEY_SELECTED_DRIVE_MODE, value).apply()
+        }
+
     /**
      * Режим темы приложения.
      * "auto" = следует системной теме (по умолчанию)
@@ -319,6 +347,14 @@ class PreferencesManager(context: Context) {
         val checkTempOnceOnStartup: Boolean,
         val autoOffTimerMinutes: Int,
         val temperatureSource: String
+    )
+
+    /**
+     * Data class для настроек режима вождения.
+     */
+    data class DriveModeSettings(
+        val autoDriveModeEnabled: Boolean,
+        val selectedDriveMode: Int
     )
 
     /**
@@ -433,6 +469,34 @@ class PreferencesManager(context: Context) {
     }
 
     /**
+     * Реактивный Flow для подписки на изменения настроек режима вождения.
+     * Срабатывает ТОЛЬКО при изменении, не требует постоянного polling.
+     */
+    val driveModeSettingsFlow: Flow<DriveModeSettings> = callbackFlow {
+        // Отправляем текущие значения при подписке
+        trySend(getCurrentDriveModeSettings())
+
+        // Создаем listener для отслеживания изменений
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            // Реагируем только на изменения настроек режима вождения
+            when (key) {
+                KEY_AUTO_DRIVE_MODE_ENABLED,
+                KEY_SELECTED_DRIVE_MODE -> {
+                    trySend(getCurrentDriveModeSettings())
+                }
+            }
+        }
+
+        // Регистрируем listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+
+        // Удаляем listener при отписке
+        awaitClose {
+            prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    /**
      * Получает текущие настройки overlay.
      */
     private fun getCurrentOverlaySettings(): OverlaySettings {
@@ -456,6 +520,16 @@ class PreferencesManager(context: Context) {
             checkTempOnceOnStartup = checkTempOnceOnStartup,
             autoOffTimerMinutes = autoOffTimerMinutes,
             temperatureSource = temperatureSource
+        )
+    }
+
+    /**
+     * Получает текущие настройки режима вождения.
+     */
+    private fun getCurrentDriveModeSettings(): DriveModeSettings {
+        return DriveModeSettings(
+            autoDriveModeEnabled = autoDriveModeEnabled,
+            selectedDriveMode = selectedDriveMode
         )
     }
 }

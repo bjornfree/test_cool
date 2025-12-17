@@ -272,7 +272,8 @@ class AutoSeatHeatService : Service() {
 
             // КРИТИЧНО: Проверяем на ручное вмешательство ТОЛЬКО после первичной установки!
             // При первом запуске текущие уровни могут быть любыми (часто 0/0), это не вмешательство.
-            if (state.initialSetupComplete) {
+            // ТАКЖЕ пропускаем проверку если настройки только что изменены программно (НЕ ручное вмешательство).
+            if (state.initialSetupComplete && !state.settingsJustChanged) {
                 var manualOverrideDetected = false
                 var manualDriverLevel: Int? = null
                 var manualPassengerLevel: Int? = null
@@ -310,6 +311,8 @@ class AutoSeatHeatService : Service() {
                     )
                     return
                 }
+            } else if (state.settingsJustChanged) {
+                log("⚙ Настройки изменены программно - пропускаем проверку на ручное вмешательство")
             } else {
                 log("⚙ Первичная установка - пропускаем проверку на ручное вмешательство")
             }

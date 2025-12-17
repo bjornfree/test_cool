@@ -168,12 +168,10 @@ object VehiclePropertyConstants {
      * DRIVE_MODE: Режим вождения (ECARX/Geely)
      * Property ID: 570491136 (0x22006100)
      *
-     * Значения:
-     * - 570491137 (0x22006101): Eco
-     * - 570491138 (0x22006102): Comfort
-     * - 570491139 (0x22006103): Sport
-     * - 570491201 (0x22006141): Adaptive
+     * ВАЖНО: Используйте DriveMode enum из DriveModeConstants.kt
+     * для работы с режимами вождения вместо magic numbers.
      *
+     * @see com.bjornfree.drivemode.data.constants.DriveMode
      * Источник: рабочий код с ECARX API
      */
     const val DRIVE_MODE = 570491136  // 0x22006100
@@ -226,15 +224,22 @@ object VehiclePropertyConstants {
      * Маппинг кодов режимов вождения в строки.
      * Значения из ECARX/Geely Factory API.
      *
+     * @deprecated Используйте DriveMode.fromECarXCode(modeCode).key вместо этой функции.
+     * Эта функция оставлена для обратной совместимости.
+     *
      * @param modeCode полный код режима от Car API
      * @return строка режима или null если неизвестен
      */
-    fun driveModeToString(modeCode: Int): String? = when (modeCode) {
-        570491137 -> "eco"        // 0x22006101 - Eco mode
-        570491138 -> "comfort"    // 0x22006102 - Comfort/Normal mode
-        570491139 -> "sport"      // 0x22006103 - Sport mode
-        570491201 -> "adaptive"   // 0x22006141 - Adaptive mode
-        else -> null              // Unknown or invalid
+    @Deprecated(
+        message = "Используйте DriveMode.fromECarXCode(modeCode).key из DriveModeConstants.kt",
+        replaceWith = ReplaceWith(
+            "DriveMode.fromECarXCode(modeCode).key",
+            "com.bjornfree.drivemode.data.constants.DriveMode"
+        )
+    )
+    fun driveModeToString(modeCode: Int): String? {
+        val mode = DriveMode.fromECarXCode(modeCode)
+        return if (mode.isValid()) mode.key else null
     }
 
     // ========================================

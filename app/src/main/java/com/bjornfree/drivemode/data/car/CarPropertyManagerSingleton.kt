@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import com.ecarx.xui.adaptapi.car.base.ICarFunction
+
 
 /**
  * Singleton для управления единственным instance CarPropertyManager.
@@ -18,6 +20,190 @@ class CarPropertyManagerSingleton(private val context: Context) {
         private const val CLASS_CAR = "android.car.Car"
         private const val CLASS_CAR_PROPERTY_MANAGER = "android.car.hardware.property.CarPropertyManager"
         private const val CAR_PROPERTY_SERVICE_NAME = "property"
+    }
+
+    private var iCarFunction: ICarFunction? = null
+
+    /**
+     * Injects an already-created ECarX ICarFunction instance.
+     * This class does NOT create ICarFunction by itself.
+     */
+    fun setICarFunction(carFunction: ICarFunction?) {
+        iCarFunction = carFunction
+        Log.i(TAG, "ICarFunction injected: ${carFunction != null}")
+    }
+
+    /**
+     * Проверяет доступность функции ECarX.
+     * @return true если функция доступна (active)
+     */
+    fun isCarFunctionAvailable(functionId: Int, zone: Int? = null): Boolean {
+        val f = iCarFunction
+        if (f == null) {
+            return false
+        }
+
+        return try {
+            val status = if (zone == null) {
+                f.isFunctionSupported(functionId)
+            } else {
+                f.isFunctionSupported(functionId, zone)
+            }
+
+            // FunctionStatus.active означает что функция доступна
+            val isActive = status == com.ecarx.xui.adaptapi.FunctionStatus.active
+            Log.d(TAG, "isCarFunctionAvailable functionId=$functionId zone=${zone ?: "<none>"} status=$status active=$isActive")
+            isActive
+        } catch (t: Throwable) {
+            Log.e(TAG, "isCarFunctionAvailable failed functionId=$functionId zone=$zone", t)
+            false
+        }
+    }
+
+    /**
+     * Sets an ECarX function value (int).
+     * @return true if the call returned true.
+     */
+    fun setCarFunctionValue(functionId: Int, value: Int, zone: Int? = null): Boolean {
+        val f = iCarFunction
+        if (f == null) {
+            Log.w(TAG, "ICarFunction is null; cannot set functionId=$functionId value=$value")
+            return false
+        }
+
+        return try {
+            val ok = if (zone == null) {
+                f.setFunctionValue(functionId, value)
+            } else {
+                f.setFunctionValue(functionId, zone, value)
+            }
+            Log.i(TAG, "setCarFunctionValue ok=$ok functionId=$functionId zone=${zone ?: "<none>"} value=$value")
+            ok
+        } catch (t: Throwable) {
+            Log.e(TAG, "setCarFunctionValue failed functionId=$functionId zone=$zone value=$value", t)
+            false
+        }
+    }
+
+    /**
+     * Устанавливает значение функции с retry-логикой и проверкой результата.
+     * Пытается 3 раза, после каждой попытки проверяет что значение действительно установилось.
+     *
+     * @param functionId ID функции
+     * @param value значение для установки
+     * @param zone опциональная зона
+     * @return true если значение успешно установлено и подтверждено
+     */
+    fun setCarFunctionValueWithRetry(functionId: Int, value: Int, zone: Int? = null): Boolean {
+        val f = iCarFunction
+        if (f == null) {
+            Log.w(TAG, "ICarFunction is null; cannot set functionId=$functionId value=$value")
+            return false
+        }
+
+        // Пытаемся 3 раза
+        for (attempt in 1..3) {
+            // Проверяем доступность функции
+            if (!isCarFunctionAvailable(functionId, zone)) {
+                Log.w(TAG, "Function not available: functionId=$functionId zone=$zone, attempt=$attempt")
+                Thread.sleep(200)
+                continue
+            }
+
+            // Устанавливаем значение
+            try {
+                val ok = if (zone == null) {
+                    f.setFunctionValue(functionId, value)
+                } else {
+                    f.setFunctionValue(functionId, zone, value)
+                }
+
+                Log.i(TAG, "setCarFunctionValue attempt=$attempt ok=$ok functionId=$functionId zone=${zone ?: "<none>"} value=$value")
+
+                if (!ok) {
+                    Thread.sleep(200)
+                    continue
+                }
+
+                // Проверяем что значение действительно установилось (2 попытки с возрастающими задержками)
+                for (verifyAttempt in 1..2) {
+                    val delayMs = 200L + (verifyAttempt - 1) * 100L
+                    Thread.sleep(delayMs)
+
+                    val currentValue = if (zone == null) {
+                        f.getFunctionValue(functionId)
+                    } else {
+                        f.getFunctionValue(functionId, zone)
+                    }
+
+                    Log.d(TAG, "Verify attempt=$verifyAttempt currentValue=$currentValue expected=$value")
+
+                    if (currentValue == value) {
+                        Log.i(TAG, "✓ Successfully set and verified functionId=$functionId value=$value (attempt=$attempt, verify=$verifyAttempt)")
+                        return true
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "setCarFunctionValue attempt=$attempt failed", t)
+            }
+
+            Thread.sleep(200)
+        }
+
+        Log.e(TAG, "✗ Failed to set functionId=$functionId value=$value after 3 attempts")
+        return false
+    }
+
+    /**
+     * Gets an ECarX function value (int).
+     * @return current value or null if failed
+     */
+    fun getCarFunctionValue(functionId: Int, zone: Int? = null): Int? {
+        val f = iCarFunction
+        if (f == null) {
+            Log.w(TAG, "ICarFunction is null; cannot get functionId=$functionId")
+            return null
+        }
+
+        return try {
+            val value = if (zone == null) {
+                f.getFunctionValue(functionId)
+            } else {
+                f.getFunctionValue(functionId, zone)
+            }
+            Log.i(TAG, "getCarFunctionValue functionId=$functionId zone=${zone ?: "<none>"} value=$value")
+            value
+        } catch (t: Throwable) {
+            Log.e(TAG, "getCarFunctionValue failed functionId=$functionId zone=$zone", t)
+            null
+        }
+    }
+
+    /**
+     * Convenience wrapper for drive mode selection via ECarX AdaptAPI.
+     * Pass values from `IDriveMode.DRIVE_MODE_SELECTION_*`.
+     */
+    fun setDriveModeSelection(selection: Int): Boolean {
+        // Uses ECarX drive-mode function ID.
+        return setCarFunctionValue(
+            com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT,
+            selection
+        )
+    }
+
+    /**
+     * Читает текущий режим вождения.
+     * @return код текущего режима или -1 если не удалось прочитать
+     */
+    fun getDriveModeSelection(): Int {
+        return try {
+            getCarFunctionValue(
+                com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT
+            ) ?: -1
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get drive mode selection", e)
+            -1
+        }
     }
 
     // Car API instances
@@ -45,6 +231,7 @@ class CarPropertyManagerSingleton(private val context: Context) {
     private var carClass: Class<*>? = null
     private var managerClass: Class<*>? = null
 
+
     /**
      * Инициализация Car API и CarPropertyManager.
      * Thread-safe, может быть вызвана многократно без вреда.
@@ -57,6 +244,8 @@ class CarPropertyManagerSingleton(private val context: Context) {
         if (carApiUnavailable) {
             return false
         }
+
+
 
         if (isInitialized && carInstance != null && managerInstance != null) {
             return true
@@ -488,5 +677,11 @@ class CarPropertyManagerSingleton(private val context: Context) {
      */
     fun isReady(): Boolean = isInitialized && managerInstance != null
 
+    /**
+     * Проверяет, инжектирован ли ICarFunction для управления функциями авто.
+     *
+     * @return true если ICarFunction доступен
+     */
+    fun isICarFunctionAvailable(): Boolean = iCarFunction != null
 
 }

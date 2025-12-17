@@ -66,6 +66,22 @@ class HeatingControlRepository(
         heatingDecisionMade = false
         heatingActivatedAt = 0L
         disabledByTimer = false
+
+        // ВАЖНО: Смена настроек (prefs) меняет "ожидаемое" значение HVAC.
+        // Устанавливаем settingsJustChanged=true чтобы следующая проверка НЕ считала
+        // изменение настроек ручным вмешательством.
+        // Сбрасываем первичную установку и окно ручного управления.
+        val prev = _heatingState.value
+        _heatingState.value = prev.copy(
+            initialSetupComplete = false,
+            manualOverrideDetected = false,
+            manualDriverLevel = null,
+            manualPassengerLevel = null,
+            lastManualOverrideTime = 0L,
+            currentDriverLevel = null,
+            currentPassengerLevel = null,
+            settingsJustChanged = true  // КРИТИЧНО: Блокируем детекцию вмешательства
+        )
     }
 
     /**
@@ -119,17 +135,18 @@ class HeatingControlRepository(
                     heatingActivatedAt = 0L
                     disabledByTimer = false // Сбрасываем блокировку таймера для следующего запуска
 
-                    // КРИТИЧНО: Сбрасываем флаг первичной установки при выключении зажигания
+                    // КРИТИЧНО: Сбрасываем флаги при выключении зажигания
                     // Это гарантирует что при следующем запуске двигателя мы НЕ будем
                     // считать начальное состояние HVAC (обычно 0/0) ручным вмешательством
                     val prevState = _heatingState.value
-                    if (prevState.initialSetupComplete) {
+                    if (prevState.initialSetupComplete || prevState.settingsJustChanged) {
                         _heatingState.value = prevState.copy(
                             initialSetupComplete = false,
                             currentDriverLevel = null,
-                            currentPassengerLevel = null
+                            currentPassengerLevel = null,
+                            settingsJustChanged = false
                         )
-                        Log.d(TAG, "Ignition OFF: reset initialSetupComplete flag for next start")
+                        Log.d(TAG, "Ignition OFF: reset state flags for next start")
                     }
                 }
 
@@ -150,12 +167,13 @@ class HeatingControlRepository(
 
                     // Сбрасываем окно тишины (если было ручное вмешательство)
                     val prevState = _heatingState.value
-                    if (prevState.manualOverrideDetected) {
+                    if (prevState.manualOverrideDetected || prevState.settingsJustChanged) {
                         _heatingState.value = prevState.copy(
                             manualOverrideDetected = false,
                             manualDriverLevel = null,
                             manualPassengerLevel = null,
-                            lastManualOverrideTime = 0L
+                            lastManualOverrideTime = 0L,
+                            settingsJustChanged = false
                         )
                     }
 
@@ -171,7 +189,7 @@ class HeatingControlRepository(
                             if (tempToCheck == null) {
                                 false // Температура недоступна - на всякий случай выключаем
                             } else {
-                                tempToCheck < 10f // Адаптивный порог жестко закодирован
+                                tempToCheck <= 10f // Адаптивный порог жестко закодирован
                             }
                         } else {
                             // ПРИОРИТЕТ 2: Обычный режим - проверяем температурный порог
@@ -229,9 +247,9 @@ class HeatingControlRepository(
                 // Вычисляем рекомендуемый уровень (даже если подогрев не активен)
                 val recommendedLevel = if (isAdaptive && tempToCheck != null) {
                     when {
-                        tempToCheck <= 0f -> 3
-                        tempToCheck < 5f -> 2
-                        tempToCheck < 10f -> 1
+                        tempToCheck <= 3f -> 3
+                        tempToCheck < 6f -> 2
+                        tempToCheck <= 10f -> 1
                         else -> 0
                     }
                 } else {
@@ -251,8 +269,8 @@ class HeatingControlRepository(
                         !ignition.isOn -> "Зажигание выключено"
                         currentMode == HeatingMode.OFF -> "Режим: выключен"
                         isAdaptive && tempToCheck == null -> "[Адаптив] Температура ($tempSourceLabel) недоступна → выключено"
-                        isAdaptive && tempToCheck != null && tempToCheck < 10f -> "[Адаптив] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C < 10°C → включено"
-                        isAdaptive && tempToCheck != null -> "[Адаптив] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C ≥ 10°C → выключено"
+                        isAdaptive && tempToCheck != null && tempToCheck <= 10f -> "[Адаптив] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C <= 10°C → включено"
+                        isAdaptive && tempToCheck != null -> "[Адаптив] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C  10°C → выключено"
                         tempToCheck == null -> "[Порог] Температура ($tempSourceLabel) недоступна → выключено"
                         tempToCheck != null && tempToCheck < threshold -> "[Порог] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C < ${threshold}°C → включено"
                         tempToCheck != null -> "[Порог] Температура ($tempSourceLabel) ${tempToCheck.toInt()}°C ≥ ${threshold}°C → выключено"
@@ -501,7 +519,8 @@ class HeatingControlRepository(
         _heatingState.value = _heatingState.value.copy(
             initialSetupComplete = true,
             currentDriverLevel = driverLevel,
-            currentPassengerLevel = passengerLevel
+            currentPassengerLevel = passengerLevel,
+            settingsJustChanged = false  // Сбрасываем флаг после успешной установки
         )
     }
 
@@ -524,7 +543,8 @@ class HeatingControlRepository(
             lastManualOverrideTime = 0L,
             // Сохраняем текущие уровни - они нужны для UI
             currentDriverLevel = currentDriver,
-            currentPassengerLevel = currentPassenger
+            currentPassengerLevel = currentPassenger,
+            // НЕ устанавливаем settingsJustChanged=true здесь, т.к. resetDecisionState() сделает это
         )
 
         // Сбрасываем решение чтобы логика пересчиталась

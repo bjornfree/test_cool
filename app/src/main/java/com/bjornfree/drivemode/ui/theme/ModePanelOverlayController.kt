@@ -481,7 +481,7 @@ class DrivingStatusOverlayController(
         @Volatile
         private var currentInstance: DrivingStatusOverlayController? = null
 
-        /**
+        /**s
          * Получить текущий активный instance.
          * ВСЕГДА используй этот метод вместо прямого обращения к переменной.
          */
@@ -618,7 +618,14 @@ class DrivingStatusOverlayController(
     private var container: FrameLayout? = null
     private var rootRow: LinearLayout? = null
 
-    private var enabled: Boolean = true
+    // По умолчанию не показываем overlay, пока внешний слой (Service/ViewModel)
+    // явно не применит настройку из prefs через setEnabled().
+    // Это предотвращает ситуацию: разрешение на overlay выдали → следующий updateStatus() прикрепляет view,
+    // даже если ползунок в настройках был выключен.
+    private var enabled: Boolean = false
+
+    // Флаг: была ли хотя бы один раз применена настройка enabled из внешнего слоя.
+    private var enabledInitialized: Boolean = false
 
     private var tvMode: TextView? = null
     private var tvGear: TextView? = null
@@ -649,6 +656,7 @@ class DrivingStatusOverlayController(
     fun setEnabled(isEnabled: Boolean) {
         ensureMainThread()
         android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: вызван (текущее=$enabled, новое=$isEnabled)")
+        enabledInitialized = true
         if (enabled == isEnabled) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: состояние не изменилось, return")
             return
@@ -665,7 +673,7 @@ class DrivingStatusOverlayController(
 
     fun ensureVisible() {
         ensureMainThread()
-        if (!enabled) return
+        if (!enabledInitialized || !enabled) return
         ensureAttached()
     }
 
@@ -719,7 +727,7 @@ class DrivingStatusOverlayController(
 
     fun updateStatus(state: DrivingStatusOverlayState) {
         ensureMainThread()
-        if (!enabled) return
+        if (!enabledInitialized || !enabled) return
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !Settings.canDrawOverlays(appContext)
@@ -779,8 +787,8 @@ class DrivingStatusOverlayController(
             return
         }
 
-        if (!enabled) {
-            android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: не включен, return")
+        if (!enabledInitialized || !enabled) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: не инициализирован/не включен, return")
             return
         }
 

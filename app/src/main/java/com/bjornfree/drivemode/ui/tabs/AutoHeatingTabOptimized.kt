@@ -43,6 +43,28 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
     // Доступные режимы
     val availableModes = viewModel.getAvailableModes()
 
+    // Локальное состояние для принудительного обновления таймеров каждую секунду
+    var tickState by remember { mutableStateOf(0L) }
+
+    // КРИТИЧНО: Обновляем UI каждую секунду для таймеров
+    LaunchedEffect(
+        heatingState.heatingActivatedAt,
+        heatingState.lastManualOverrideTime,
+        heatingState.manualOverrideDetected,
+        autoOffTimer
+    ) {
+        // Запускаем периодическое обновление только если есть активные таймеры
+        val hasAutoOffTimer = autoOffTimer > 0 && heatingState.heatingActivatedAt > 0
+        val hasManualOverrideTimer = heatingState.manualOverrideDetected
+
+        if (hasAutoOffTimer || hasManualOverrideTimer) {
+            while (true) {
+                kotlinx.coroutines.delay(1000) // Обновляем каждую секунду
+                tickState = System.currentTimeMillis()
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -89,11 +111,13 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
 
                         // Таймер автоотключения (если активен)
                         if (autoOffTimer > 0 && heatingState.heatingActivatedAt > 0) {
-                            val timerRemaining = (autoOffTimer * 60) - ((System.currentTimeMillis() - heatingState.heatingActivatedAt) / 1000)
+                            // tickState обновляется каждую секунду через LaunchedEffect
+                            val currentTime = if (tickState > 0) System.currentTimeMillis() else System.currentTimeMillis()
+                            val timerRemaining = (autoOffTimer * 60) - ((currentTime - heatingState.heatingActivatedAt) / 1000)
                             if (timerRemaining > 0) {
                                 Spacer(modifier = Modifier.height(AppTheme.Spacing.ExtraSmall))
                                 Text(
-                                    text = "⏱ Возврат к автоконтролю через ${timerRemaining / 60}:${String.format(java.util.Locale.getDefault(), "%02d", timerRemaining % 60)}",
+                                    text = "⏱ Автоотключение через ${timerRemaining / 60}:${String.format(java.util.Locale.getDefault(), "%02d", timerRemaining % 60)}",
                                     fontSize = AppTheme.Typography.BodySmall.first,
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                                     color = AdaptiveColors.primary
@@ -296,7 +320,9 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
                     )
 
                     // Показываем оставшееся время окна тишины И таймера
-                    val silenceRemaining = 5 * 60 - (System.currentTimeMillis() - heatingState.lastManualOverrideTime) / 1000
+                    // tickState обновляется каждую секунду через LaunchedEffect
+                    val currentTime = if (tickState > 0) System.currentTimeMillis() else System.currentTimeMillis()
+                    val silenceRemaining = 5 * 60 - (currentTime - heatingState.lastManualOverrideTime) / 1000
 
                     if (silenceRemaining > 0) {
                         Text(

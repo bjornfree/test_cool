@@ -24,6 +24,7 @@ import com.bjornfree.drivemode.ui.theme.ModePanelOverlayController
 import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
 import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayController
 import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayState
+import com.bjornfree.drivemode.data.constants.DriveMode as DriveModeEnum
 import kotlinx.coroutines.*
 import org.koin.android.ext.android.inject
 
@@ -131,6 +132,7 @@ class DriveModeService : Service() {
     private val vehicleMetricsRepo: VehicleMetricsRepository by inject()
     private val prefsManager: com.bjornfree.drivemode.data.preferences.PreferencesManager by inject()
     private val driveModeMonitor: DriveModeMonitor by inject()
+    private val carPropertyManager: com.bjornfree.drivemode.data.car.CarPropertyManagerSingleton by inject()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var borderOverlay: BorderOverlayController
@@ -169,6 +171,23 @@ class DriveModeService : Service() {
         instance = this
         log("Режимы: сервис запущен")
         log("Режимы: источник данных - Car API (прямое чтение)")
+
+        // Проверяем статус ICarFunction для управления режимом вождения
+        try {
+            val hasICarFunction = carPropertyManager.isICarFunctionAvailable()
+            if (hasICarFunction) {
+                log("Управление режимом: ECarX ICarFunction доступен ✓")
+                Log.i(TAG, "ICarFunction is available for drive mode control")
+            } else {
+                log("Управление режимом: ВНИМАНИЕ - ECarX ICarFunction недоступен")
+                log("  → Функции управления режимом вождения не будут работать")
+                log("  → Проверьте логи DriveModeApplication для деталей инициализации")
+                Log.w(TAG, "ICarFunction is NOT available - drive mode control will not work")
+            }
+        } catch (e: Exception) {
+            log("Управление режимом: ошибка проверки ICarFunction - ${e.message}")
+            Log.e(TAG, "Error checking ICarFunction availability", e)
+        }
 
         // Подписываемся на состояние зажигания из Repository
         subscribeToIgnitionState()
@@ -377,6 +396,51 @@ class DriveModeService : Service() {
                 if (state.isOn) {
                     log("ignition: состояние = ${state.stateName}")
 
+                    // АВТОУСТАНОВКА РЕЖИМА ПРИ СТАРТЕ АВТО
+                    if (prefsManager.autoDriveModeEnabled) {
+                        val selectedModeCode = prefsManager.selectedDriveMode
+                        val mode = DriveModeEnum.fromECarXCode(selectedModeCode)
+
+                        log("Автоустановка режима: попытка установить $mode")
+                        Log.i(TAG, "Auto-applying drive mode: $mode")
+
+                        // Выполняем в IO dispatcher т.к. retry-логика использует Thread.sleep()
+                        withContext(Dispatchers.IO) {
+                            try {
+                                // Читаем текущий режим ДО установки
+                                try {
+                                    val currentCode = carPropertyManager.getDriveModeSelection()
+                                    val currentMode = DriveModeEnum.fromECarXCode(currentCode)
+                                    log("Текущий режим ДО автоустановки: $currentMode")
+                                    Log.i(TAG, "Current drive mode BEFORE auto-apply: $currentMode")
+                                } catch (e: Exception) {
+                                    log("Не удалось прочитать текущий режим: ${e.message}")
+                                }
+
+                                // Используем метод с retry-логикой и встроенной проверкой
+                                val success = carPropertyManager.setCarFunctionValueWithRetry(
+                                    com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT,
+                                    selectedModeCode
+                                )
+
+                                if (success) {
+                                    // Метод setCarFunctionValueWithRetry уже проверил что значение установилось
+                                    log("Автоустановка режима: ${mode.displayName} ПОДТВЕРЖДЕН ✓")
+                                    Log.i(TAG, "Drive mode auto-applied and CONFIRMED: $mode")
+                                } else {
+                                    log("Автоустановка режима: ОШИБКА - не удалось установить ${mode.displayName} после 3 попыток")
+                                    log("Возможные причины: автомобиль в движении, неподходящие условия, функция недоступна")
+                                    Log.e(TAG, "Failed to auto-apply drive mode after retries: $mode")
+                                }
+                            } catch (e: Exception) {
+                                log("Автоустановка режима: ИСКЛЮЧЕНИЕ - ${e.message}")
+                                Log.e(TAG, "Exception during auto-apply drive mode", e)
+                            }
+                        }
+                    } else {
+                        log("Автоустановка режима: выключена в настройках")
+                    }
+
                     // При включении зажигания, если сервис уже знает последний режим,
                     // сразу показываем его (мониторинг Car API работает постоянно)
                     val last = lastShownMode
@@ -490,16 +554,10 @@ class DriveModeService : Service() {
 
             driveModeMonitor.currentMode.collect { mode ->
                 if (mode != null) {
-                    // Rate-limit: не чаще раз в MIN_EVENT_INTERVAL_MS
-                    val now = SystemClock.elapsedRealtime()
-                    if ((now - lastShownAt) < MIN_EVENT_INTERVAL_MS && lastShownMode == mode) {
-                        return@collect
-                    }
-
                     log("Drive Mode: изменение режима → $mode (через Car API)")
                     Log.i(TAG, "Drive mode changed: $mode (via Car API)")
 
-                    withContext(Dispatchers.Main) {
+                    withContext(Dispatchers.Main.immediate) {
                         onModeDetected(mode)
                     }
                 }

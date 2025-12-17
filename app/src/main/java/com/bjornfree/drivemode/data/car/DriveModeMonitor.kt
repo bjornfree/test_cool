@@ -1,6 +1,7 @@
 package com.bjornfree.drivemode.data.car
 
 import android.util.Log
+import com.bjornfree.drivemode.data.constants.DriveMode
 import com.bjornfree.drivemode.data.constants.VehiclePropertyConstants
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,10 +48,10 @@ class DriveModeMonitor(private val carManager: CarPropertyManagerSingleton) {
         // Читаем текущий режим при старте
         val currentValue = carManager.readIntProperty(VehiclePropertyConstants.DRIVE_MODE)
         if (currentValue != null) {
-            val mode = VehiclePropertyConstants.driveModeToString(currentValue)
-            if (mode != null) {
-                _currentMode.value = mode
-                Log.i(TAG, "Initial drive mode: $mode (code=$currentValue)")
+            val driveMode = DriveMode.fromECarXCode(currentValue)
+            if (driveMode.isValid()) {
+                _currentMode.value = driveMode.key
+                Log.i(TAG, "Initial drive mode: $driveMode")
             } else {
                 Log.w(TAG, "Unknown drive mode code: $currentValue")
             }
@@ -79,12 +80,12 @@ class DriveModeMonitor(private val carManager: CarPropertyManagerSingleton) {
      * @param modeCode код режима от Car API
      */
     private fun handleModeChange(modeCode: Int) {
-        val mode = VehiclePropertyConstants.driveModeToString(modeCode)
-        if (mode != null) {
+        val driveMode = DriveMode.fromECarXCode(modeCode)
+        if (driveMode.isValid()) {
             // Обновляем только если режим изменился
-            if (_currentMode.value != mode) {
-                _currentMode.value = mode
-                Log.i(TAG, "Drive mode changed: $mode (code=$modeCode)")
+            if (_currentMode.value != driveMode.key) {
+                _currentMode.value = driveMode.key
+                Log.i(TAG, "Drive mode changed: $driveMode")
             }
         } else {
             Log.w(TAG, "Unknown drive mode code received: $modeCode")
@@ -114,7 +115,8 @@ class DriveModeMonitor(private val carManager: CarPropertyManagerSingleton) {
     fun getCurrentModeNow(): String? {
         val value = carManager.readIntProperty(VehiclePropertyConstants.DRIVE_MODE)
         return if (value != null) {
-            VehiclePropertyConstants.driveModeToString(value)
+            val driveMode = DriveMode.fromECarXCode(value)
+            if (driveMode.isValid()) driveMode.key else null
         } else {
             null
         }
