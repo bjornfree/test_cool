@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -133,17 +132,15 @@ class VehicleMetricsService : Service() {
 
     private fun buildNotification(): Notification {
         val channelId = "vehicle_metrics_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Мониторинг параметров автомобиля",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Real-time мониторинг скорости, оборотов, передачи"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            channelId,
+            "Мониторинг параметров автомобиля",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Real-time мониторинг скорости, оборотов, передачи"
         }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.createNotificationChannel(channel)
 
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("Мониторинг параметров")

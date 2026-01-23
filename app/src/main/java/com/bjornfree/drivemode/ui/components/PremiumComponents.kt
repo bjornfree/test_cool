@@ -246,8 +246,8 @@ fun PremiumSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     label: String,
-    subtitle: String? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    subtitle: String? = null
 ) {
     Row(
         modifier = modifier
@@ -295,9 +295,9 @@ fun PremiumSlider(
     onValueChange: (Float) -> Unit,
     label: String,
     valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int = 0,
     valueLabel: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    steps: Int = 0
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(

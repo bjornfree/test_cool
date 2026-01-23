@@ -1,11 +1,11 @@
 package com.bjornfree.drivemode.ui.theme
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
@@ -258,23 +258,14 @@ class ModePanelOverlayController(
         if (!overlayEnabled) return
 
         // Check if overlay permission is granted
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !Settings.canDrawOverlays(appContext)
-        ) {
+        if (!Settings.canDrawOverlays(appContext)) {
             return
-        }
-
-        val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
         }
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            layoutType,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -579,7 +570,30 @@ class DrivingStatusOverlayController(
         var longPressRunnable: Runnable? = null
         var longPressTriggered = false
 
+        // GestureDetector для обработки двойного тапа
+        val gestureDetector = android.view.GestureDetector(
+            appContext,
+            object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onDoubleTap(e: MotionEvent): Boolean {
+                    // Двойной тап - запускаем приложение
+                    try {
+                        val intent = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
+                        intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        appContext.startActivity(intent)
+                        android.util.Log.i("DrivingStatusOverlay", "Двойной тап: запуск приложения")
+                    } catch (e: Exception) {
+                        android.util.Log.e("DrivingStatusOverlay", "Ошибка запуска приложения", e)
+                    }
+                    return true
+                }
+            }
+        )
+
         targetView.setOnTouchListener { v, event ->
+            // Сначала проверяем двойной тап через GestureDetector
+            val gestureHandled = gestureDetector.onTouchEvent(event)
+
+            // Обработка долгого нажатия
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     longPressTriggered = false
@@ -600,11 +614,11 @@ class DrivingStatusOverlayController(
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
                     longPressRunnable?.let { v.removeCallbacks(it) }
-                    val consumed = longPressTriggered
+                    val consumed = longPressTriggered || gestureHandled
                     longPressRunnable = null
                     consumed
                 }
-                else -> false
+                else -> gestureHandled
             }
         }
     }
@@ -637,11 +651,25 @@ class DrivingStatusOverlayController(
     private var attached: Boolean = false
 
     private var position: String = initialPosition
+    private var height: Int = 56  // Высота в dp (по умолчанию 56dp)
 
     private var isDarkTheme: Boolean = true
     private var bgColor: Int = COLOR_BG_DARK
     private var textColor: Int = COLOR_TEXT_DARK_PRIMARY
     private var textSecondaryColor: Int = COLOR_TEXT_DARK_SECONDARY
+
+    /**
+     * Вычисляет размер текста в зависимости от высоты плашки.
+     * Для компактного режима (40dp) уменьшаем текст на ~30%,
+     * для увеличенного (70dp) увеличиваем на ~15%.
+     */
+    private fun calculateTextSize(baseSize: Float): Float {
+        return when {
+            height <= 40 -> baseSize * 0.70f  // Компакт: -30%
+            height >= 70 -> baseSize * 1.15f  // Большая: +15%
+            else -> baseSize                   // Стандарт: без изменений
+        }
+    }
 
     init {
         android.util.Log.w("DrivingStatusOverlay", ">>> INIT: Создание нового instance (позиция: $position)")
@@ -725,13 +753,35 @@ class DrivingStatusOverlayController(
         }
     }
 
+    fun setHeight(newHeight: Int) {
+        ensureMainThread()
+        android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: вызван (текущая=$height, новая=$newHeight)")
+
+        if (height == newHeight) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: высота не изменилась, return")
+            return
+        }
+
+        val wasAttached = attached
+        android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: wasAttached=$wasAttached")
+
+        // Detach existing view (do NOT destroy instance)
+        detachView()
+
+        height = newHeight
+        android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: высота обновлена на $height dp")
+
+        if (wasAttached) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: пересоздаем overlay")
+            ensureAttached()
+        }
+    }
+
     fun updateStatus(state: DrivingStatusOverlayState) {
         ensureMainThread()
         if (!enabledInitialized || !enabled) return
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !Settings.canDrawOverlays(appContext)
-        ) {
+        if (!Settings.canDrawOverlays(appContext)) {
             return
         }
 
@@ -792,28 +842,19 @@ class DrivingStatusOverlayController(
             return
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !Settings.canDrawOverlays(appContext)
-        ) {
+        if (!Settings.canDrawOverlays(appContext)) {
             android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: нет разрешения, return")
             return
         }
 
-        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: СОЗДАЕМ overlay в позиции $position")
+        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: СОЗДАЕМ overlay в позиции $position с высотой $height dp")
 
-        val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        val heightPx = (56f * density).toInt()
+        val heightPx = (height.toFloat() * density).toInt()
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             heightPx,
-            layoutType,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -861,7 +902,7 @@ class DrivingStatusOverlayController(
             maxLines = 1
             text = "— км"
             setTextColor(textColor)
-            textSize = 16f
+            textSize = calculateTextSize(20f)
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
         }
@@ -875,7 +916,7 @@ class DrivingStatusOverlayController(
             maxLines = 1
             text = "—"
             setTextColor(textColor)
-            textSize = 22f
+            textSize = calculateTextSize(26f)
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             gravity = Gravity.CENTER
         }
@@ -889,7 +930,7 @@ class DrivingStatusOverlayController(
             maxLines = 1
             text = "— км/ч"
             setTextColor(textColor)
-            textSize = 18f
+            textSize = calculateTextSize(22f)
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
         }
@@ -904,7 +945,7 @@ class DrivingStatusOverlayController(
             ellipsize = android.text.TextUtils.TruncateAt.END
             text = "—"
             setTextColor(textColor)
-            textSize = 16f
+            textSize = calculateTextSize(19f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
         }
@@ -918,7 +959,7 @@ class DrivingStatusOverlayController(
             maxLines = 1
             text = "—° / —°"
             setTextColor(textSecondaryColor)
-            textSize = 16f
+            textSize = calculateTextSize(18f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
         }
@@ -933,7 +974,7 @@ class DrivingStatusOverlayController(
             ellipsize = android.text.TextUtils.TruncateAt.END
             text = "—"
             setTextColor(textSecondaryColor)
-            textSize = 15f
+            textSize = calculateTextSize(17f)
             typeface = Typeface.MONOSPACE
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
         }

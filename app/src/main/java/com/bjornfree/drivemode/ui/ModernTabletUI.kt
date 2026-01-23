@@ -1,66 +1,78 @@
 package com.bjornfree.drivemode.ui
 
-import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
-import androidx.compose.animation.*
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.PI
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.bjornfree.drivemode.R
-import com.bjornfree.drivemode.core.AutoSeatHeatService
 import com.bjornfree.drivemode.core.DriveModeService
-import com.bjornfree.drivemode.core.VehicleMetricsService
-import com.bjornfree.drivemode.domain.model.TireData
-import com.bjornfree.drivemode.ui.tabs.VehicleInfoTabOptimized
+import com.bjornfree.drivemode.presentation.viewmodel.AutoHeatingViewModel
+import com.bjornfree.drivemode.presentation.viewmodel.ConsoleViewModel
+import com.bjornfree.drivemode.presentation.viewmodel.DiagnosticsViewModel
+import com.bjornfree.drivemode.presentation.viewmodel.SettingsViewModel
+import com.bjornfree.drivemode.presentation.viewmodel.VehicleInfoViewModel
 import com.bjornfree.drivemode.ui.tabs.AutoHeatingTabOptimized
-import com.bjornfree.drivemode.ui.tabs.DiagnosticsTabOptimized
 import com.bjornfree.drivemode.ui.tabs.ConsoleTabOptimized
-import com.bjornfree.drivemode.domain.model.TirePressureData
-import com.bjornfree.drivemode.presentation.viewmodel.*
-import org.koin.androidx.compose.koinViewModel
-import kotlinx.coroutines.Dispatchers
+import com.bjornfree.drivemode.ui.tabs.DiagnosticsTabOptimized
+import com.bjornfree.drivemode.ui.tabs.VehicleInfoTabOptimized
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import com.bjornfree.drivemode.data.constants.DriveMode
+import org.koin.androidx.compose.koinViewModel
 
 /**
  * Современный UI для планшета 14" с Material Design 3.
@@ -70,7 +82,6 @@ import com.bjornfree.drivemode.data.constants.DriveMode
 @Composable
 fun ModernTabletUI() {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     // Inject ViewModels через Koin
     val vehicleInfoViewModel: VehicleInfoViewModel = koinViewModel()
@@ -79,7 +90,7 @@ fun ModernTabletUI() {
     val consoleViewModel: ConsoleViewModel = koinViewModel()
     val settingsViewModel: SettingsViewModel = koinViewModel()
 
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var showAbout by remember { mutableStateOf(false) }
 
     val tabs = listOf(
@@ -162,11 +173,10 @@ fun ModernTabletUI() {
             },
             title = { Text("О приложении") },
             text = {
-                val res = ctx.resources
                 // Загружаем bitmap из raw/donate.png
-                val donateBitmap = remember {
+                val donateBitmap = remember(ctx) {
                     try {
-                        BitmapFactory.decodeResource(res, R.raw.donate)
+                        BitmapFactory.decodeResource(ctx.resources, R.raw.donate)
                     } catch (_: Exception) {
                         null
                     }
@@ -212,6 +222,7 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     val panelEnabled by viewModel.panelEnabled.collectAsState()
     val metricsBarEnabled by viewModel.metricsBarEnabled.collectAsState()
     val metricsBarPosition by viewModel.metricsBarPosition.collectAsState()
+    val metricsBarHeight by viewModel.metricsBarHeight.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val autoDriveModeEnabled by viewModel.autoDriveModeEnabled.collectAsState()
     val selectedDriveMode by viewModel.selectedDriveMode.collectAsState()
@@ -306,119 +317,9 @@ fun SettingsTab(viewModel: SettingsViewModel) {
             }
         }
 
-        // Автоустановка режима вождения
-        Text(
-            "Автоустановка режима вождения",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        // Чекбокс включения автоустановки
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Устанавливать режим при старте",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "Автоматически устанавливать выбранный режим при включении зажигания",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = autoDriveModeEnabled,
-                    onCheckedChange = { viewModel.setAutoDriveModeEnabled(it) }
-                )
-            }
-        }
-
-        // Выбор режима
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    "Режим вождения",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Создаем кнопки для всех доступных режимов
-                    DriveMode.selectableModes.forEach { mode ->
-                        FilterChip(
-                            selected = selectedDriveMode == mode.ecarxCode,
-                            onClick = { viewModel.setSelectedDriveMode(mode.ecarxCode) },
-                            label = { Text(mode.displayName) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                // Описание выбранного режима
-                val currentMode = DriveMode.fromECarXCode(selectedDriveMode)
-                Text(
-                    text = if (currentMode.isValid()) {
-                        "Режим ${currentMode.displayName} - ${currentMode.description}"
-                    } else {
-                        "Выберите режим вождения"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Кнопка принудительного применения
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    "Применить режим",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    "Принудительно установить выбранный режим вождения прямо сейчас",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                val selectedMode = DriveMode.fromECarXCode(selectedDriveMode)
-                Button(
-                    onClick = { viewModel.applyDriveMode() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Установить режим ${selectedMode.displayName}")
-                }
-            }
-        }
-
         // Оверлеи и интерфейс
         Text(
-            "ёОверлеи и интерфейс",
+            "Оверлеи и интерфейс",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold
         )
@@ -554,6 +455,50 @@ fun SettingsTab(viewModel: SettingsViewModel) {
                         "top" -> "Полоска отображается вверху экрана"
                         else -> "Положение по умолчанию"
                     },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Высота полоски метрик
+                Text(
+                    "Высота полоски",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Компактная (40dp)
+                    FilterChip(
+                        selected = metricsBarHeight == 40,
+                        onClick = { viewModel.setMetricsBarHeight(40) },
+                        label = { Text("Компакт") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Стандартная (56dp)
+                    FilterChip(
+                        selected = metricsBarHeight == 56,
+                        onClick = { viewModel.setMetricsBarHeight(56) },
+                        label = { Text("Стандарт") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Увеличенная (70dp)
+                    FilterChip(
+                        selected = metricsBarHeight == 70,
+                        onClick = { viewModel.setMetricsBarHeight(70) },
+                        label = { Text("Большая") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Text(
+                    "Высота: ${metricsBarHeight}dp",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

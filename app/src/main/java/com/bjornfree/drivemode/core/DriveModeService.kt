@@ -271,6 +271,7 @@ class DriveModeService : Service() {
             var isFirstCollect = true  // Флаг первого вызова
             var lastMetricsBarEnabled = false  // Инициализируем как false
             var lastMetricsBarPosition = ""
+            var lastMetricsBarHeight = 56  // По умолчанию 56dp
             var lastBorderEnabled = false
             var lastPanelEnabled = false
 
@@ -288,6 +289,18 @@ class DriveModeService : Service() {
                     }
                     log("Metrics bar position: ${settings.metricsBarPosition}")
                     lastMetricsBarPosition = settings.metricsBarPosition
+                }
+
+                // ========== METRICS BAR HEIGHT ==========
+                // Устанавливаем высоту также ДО enabled
+
+                if (settings.metricsBarHeight != lastMetricsBarHeight || isFirstCollect) {
+                    withContext(Dispatchers.Main.immediate) {
+                        requireMainThread()
+                        drivingStatusOverlay.setHeight(settings.metricsBarHeight)
+                    }
+                    log("Metrics bar height: ${settings.metricsBarHeight}dp")
+                    lastMetricsBarHeight = settings.metricsBarHeight
                 }
 
                 // ========== METRICS BAR ENABLED ==========
@@ -520,6 +533,24 @@ class DriveModeService : Service() {
         }
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+
+        // Отслеживаем изменения системной темы (день/ночь)
+        // для автоматического обновления overlay в режиме "auto"
+        val themeMode = prefsManager.themeMode
+        if (themeMode == "auto") {
+            val isDark = (newConfig.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                    android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+            scope.launch(Dispatchers.Main.immediate) {
+                requireMainThread()
+                drivingStatusOverlay.setDarkTheme(isDark)
+                log("Системная тема изменена: ${if (isDark) "тёмная" else "светлая"}")
+            }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     /**
@@ -666,12 +697,10 @@ class DriveModeService : Service() {
 
     private fun buildNotification(): Notification {
         val chId = "drive_mode_service"
-        if (Build.VERSION.SDK_INT >= 26) {
-            val ch = NotificationChannel(chId, "DriveMode", NotificationManager.IMPORTANCE_MIN)
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
-                ch
-            )
-        }
+        val ch = NotificationChannel(chId, "DriveMode", NotificationManager.IMPORTANCE_MIN)
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
+            ch
+        )
         return NotificationCompat.Builder(this, chId)
             .setContentTitle("DriveMode: сервис активен")
             .setContentText("Отслеживание режимов по логам системы")
@@ -732,15 +761,13 @@ class DriveModeService : Service() {
     private fun showErrorNotification(message: String) {
         try {
             val chId = "drive_mode_errors"
-            if (Build.VERSION.SDK_INT >= 26) {
-                val ch = NotificationChannel(
-                    chId,
-                    "DriveMode Errors",
-                    NotificationManager.IMPORTANCE_HIGH
-                )
-                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                    .createNotificationChannel(ch)
-            }
+            val ch = NotificationChannel(
+                chId,
+                "DriveMode Errors",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(ch)
 
             val notification = NotificationCompat.Builder(this, chId)
                 .setContentTitle("DriveMode: Ошибка")

@@ -13,7 +13,6 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.SweepGradient
-import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
@@ -119,17 +118,10 @@ class BorderOverlayController(private val appContext: Context) {
         val existing = container
         if (existing != null && existing.windowToken != null) return
 
-        val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            layoutType,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or

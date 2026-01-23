@@ -23,6 +23,7 @@ class CarPropertyManagerSingleton(private val context: Context) {
     }
 
     private var iCarFunction: ICarFunction? = null
+    private var iDriveMode: com.ecarx.xui.adaptapi.car.vehicle.IDriveMode? = null
 
     /**
      * Injects an already-created ECarX ICarFunction instance.
@@ -31,6 +32,15 @@ class CarPropertyManagerSingleton(private val context: Context) {
     fun setICarFunction(carFunction: ICarFunction?) {
         iCarFunction = carFunction
         Log.i(TAG, "ICarFunction injected: ${carFunction != null}")
+    }
+
+    /**
+     * Injects an already-created ECarX IDriveMode instance.
+     * IDriveMode provides specialized methods for drive mode control.
+     */
+    fun setIDriveMode(driveMode: com.ecarx.xui.adaptapi.car.vehicle.IDriveMode?) {
+        iDriveMode = driveMode
+        Log.i(TAG, "IDriveMode injected: ${driveMode != null}")
     }
 
     /**
@@ -103,14 +113,14 @@ class CarPropertyManagerSingleton(private val context: Context) {
 
         // Пытаемся 3 раза
         for (attempt in 1..3) {
-            // Проверяем доступность функции
-            if (!isCarFunctionAvailable(functionId, zone)) {
-                Log.w(TAG, "Function not available: functionId=$functionId zone=$zone, attempt=$attempt")
-                Thread.sleep(200)
-                continue
+            // Проверяем доступность функции (но НЕ блокируем попытку если недоступна)
+            val isAvailable = isCarFunctionAvailable(functionId, zone)
+            if (!isAvailable) {
+                Log.w(TAG, "Function reports notavailable: functionId=$functionId zone=$zone, attempt=$attempt - TRYING ANYWAY")
+                // НЕ делаем continue - пробуем установить в любом случае
             }
 
-            // Устанавливаем значение
+            // Устанавливаем значение ДАЖЕ ЕСЛИ availability check failed
             try {
                 val ok = if (zone == null) {
                     f.setFunctionValue(functionId, value)
@@ -118,7 +128,7 @@ class CarPropertyManagerSingleton(private val context: Context) {
                     f.setFunctionValue(functionId, zone, value)
                 }
 
-                Log.i(TAG, "setCarFunctionValue attempt=$attempt ok=$ok functionId=$functionId zone=${zone ?: "<none>"} value=$value")
+                Log.i(TAG, "setCarFunctionValue attempt=$attempt ok=$ok available=$isAvailable functionId=$functionId zone=${zone ?: "<none>"} value=$value")
 
                 if (!ok) {
                     Thread.sleep(200)
@@ -182,9 +192,61 @@ class CarPropertyManagerSingleton(private val context: Context) {
     /**
      * Convenience wrapper for drive mode selection via ECarX AdaptAPI.
      * Pass values from `IDriveMode.DRIVE_MODE_SELECTION_*`.
+     *
+     * ПРИОРИТЕТ: Использует специализированный IDriveMode если доступен,
+     * иначе fallback на общий ICarFunction.
      */
     fun setDriveModeSelection(selection: Int): Boolean {
-        // Uses ECarX drive-mode function ID.
+        // ПРИОРИТЕТ 1: Попробовать через специализированный IDriveMode
+        val driveMode = iDriveMode
+        if (driveMode != null) {
+            Log.d(TAG, "Using IDriveMode for value=$selection")
+            return try {
+                // Используем reflection т.к. не знаем точное имя метода
+                val method = driveMode.javaClass.getMethod("setDriveModeSelection", Int::class.java)
+                val result = method.invoke(driveMode, selection) as? Boolean ?: false
+                Log.i(TAG, "IDriveMode.setDriveModeSelection result=$result value=$selection")
+                result
+            } catch (e: NoSuchMethodException) {
+                Log.w(TAG, "Method setDriveModeSelection not found in IDriveMode, trying alternatives")
+                // Пробуем альтернативные имена
+                tryAlternativeDriveModeMethods(driveMode, selection)
+            } catch (e: Exception) {
+                Log.e(TAG, "IDriveMode failed, falling back to ICarFunction", e)
+                // Fallback на ICarFunction
+                setCarFunctionValue(
+                    com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT,
+                    selection
+                )
+            }
+        }
+
+        // ПРИОРИТЕТ 2: Fallback на общий ICarFunction
+        Log.d(TAG, "IDriveMode not available, using ICarFunction")
+        return setCarFunctionValue(
+            com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT,
+            selection
+        )
+    }
+
+    /**
+     * Пробует альтернативные методы для установки режима вождения через IDriveMode
+     */
+    private fun tryAlternativeDriveModeMethods(driveMode: com.ecarx.xui.adaptapi.car.vehicle.IDriveMode, selection: Int): Boolean {
+        val methodNames = listOf("setDriveMode", "setSelection", "setMode", "setDriveModeValue")
+
+        for (methodName in methodNames) {
+            try {
+                val method = driveMode.javaClass.getMethod(methodName, Int::class.java)
+                val result = method.invoke(driveMode, selection) as? Boolean ?: false
+                Log.i(TAG, "IDriveMode.$methodName result=$result value=$selection")
+                if (result) return true
+            } catch (e: Exception) {
+                // Пробуем следующий метод
+            }
+        }
+
+        Log.w(TAG, "No working method found in IDriveMode, fallback to ICarFunction")
         return setCarFunctionValue(
             com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT,
             selection
@@ -196,6 +258,25 @@ class CarPropertyManagerSingleton(private val context: Context) {
      * @return код текущего режима или -1 если не удалось прочитать
      */
     fun getDriveModeSelection(): Int {
+        // Пробуем через IDriveMode
+        val driveMode = iDriveMode
+        if (driveMode != null) {
+            return try {
+                // Используем reflection для получения значения
+                val method = driveMode.javaClass.getMethod("getDriveModeSelection")
+                val value = method.invoke(driveMode) as? Int ?: -1
+                Log.i(TAG, "IDriveMode.getDriveModeSelection value=$value")
+                value
+            } catch (e: Exception) {
+                Log.e(TAG, "IDriveMode.getDriveModeSelection failed, falling back to ICarFunction", e)
+                // Fallback
+                getCarFunctionValue(
+                    com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT
+                ) ?: -1
+            }
+        }
+
+        // Fallback на ICarFunction
         return try {
             getCarFunctionValue(
                 com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT

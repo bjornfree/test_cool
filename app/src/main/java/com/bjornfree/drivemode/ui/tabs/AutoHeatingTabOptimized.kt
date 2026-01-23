@@ -8,7 +8,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.bjornfree.drivemode.domain.model.HeatingMode
 import com.bjornfree.drivemode.presentation.viewmodel.AutoHeatingViewModel
 import com.bjornfree.drivemode.ui.components.*
@@ -44,20 +43,17 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
     val availableModes = viewModel.getAvailableModes()
 
     // Локальное состояние для принудительного обновления таймеров каждую секунду
-    var tickState by remember { mutableStateOf(0L) }
+    var tickState by remember { mutableLongStateOf(0L) }
 
-    // КРИТИЧНО: Обновляем UI каждую секунду для таймеров
+    // КРИТИЧНО: Обновляем UI каждую секунду для таймера автоотключения
     LaunchedEffect(
         heatingState.heatingActivatedAt,
-        heatingState.lastManualOverrideTime,
-        heatingState.manualOverrideDetected,
         autoOffTimer
     ) {
-        // Запускаем периодическое обновление только если есть активные таймеры
+        // Запускаем периодическое обновление только если есть активный таймер
         val hasAutoOffTimer = autoOffTimer > 0 && heatingState.heatingActivatedAt > 0
-        val hasManualOverrideTimer = heatingState.manualOverrideDetected
 
-        if (hasAutoOffTimer || hasManualOverrideTimer) {
+        if (hasAutoOffTimer) {
             while (true) {
                 kotlinx.coroutines.delay(1000) // Обновляем каждую секунду
                 tickState = System.currentTimeMillis()
@@ -134,72 +130,6 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
                     )
                 }
 
-                // Текущие уровни HVAC (если доступны)
-                if (heatingState.currentDriverLevel != null || heatingState.currentPassengerLevel != null) {
-                    PremiumDivider()
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
-                    ) {
-                        Text(
-                            text = "Текущее состояние HVAC:",
-                            fontSize = AppTheme.Typography.BodyMedium.first,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                            color = AdaptiveColors.textSecondary,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        // Водитель
-                        if (heatingState.currentDriverLevel != null) {
-                            Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "Водитель",
-                                    fontSize = AppTheme.Typography.LabelSmall.first,
-                                    color = AdaptiveColors.textSecondary
-                                )
-                                Text(
-                                    text = "Ур. ${heatingState.currentDriverLevel}",
-                                    fontSize = AppTheme.Typography.BodyLarge.first,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = AdaptiveColors.textPrimary
-                                )
-                            }
-                        }
-
-                        // Пассажир
-                        if (heatingState.currentPassengerLevel != null) {
-                            Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "Пассажир",
-                                    fontSize = AppTheme.Typography.LabelSmall.first,
-                                    color = AdaptiveColors.textSecondary
-                                )
-                                Text(
-                                    text = "Ур. ${heatingState.currentPassengerLevel}",
-                                    fontSize = AppTheme.Typography.BodyLarge.first,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = AdaptiveColors.textPrimary
-                                )
-                            }
-                        }
-
-                        // Рекомендуемый уровень
-                        Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Авто",
-                                fontSize = AppTheme.Typography.LabelSmall.first,
-                                color = AdaptiveColors.textSecondary
-                            )
-                            Text(
-                                text = "Ур. ${heatingState.recommendedLevel}",
-                                fontSize = AppTheme.Typography.BodyLarge.first,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                color = AdaptiveColors.primary
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -232,158 +162,14 @@ fun AutoHeatingTabOptimized(viewModel: AutoHeatingViewModel) {
                     )
 
                     Text(
-                        text = "Подогрев останется выключенным до выключения зажигания или ручного изменения.",
+                        text = "Подогрев останется выключенным до выключения зажигания.",
                         fontSize = AppTheme.Typography.BodySmall.first,
                         color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.6f)
                     )
-
-                    // Кнопка возобновления автоконтроля (сбросит блокировку таймера)
-                    Button(
-                        onClick = { viewModel.resumeAutoControl() },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AdaptiveColors.primary
-                        )
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(modifier = Modifier.width(AppTheme.Spacing.Small))
-                        Text("Включить автоподогрев снова")
-                    }
                 }
             }
         }
 
-        // ============ РУЧНОЕ УПРАВЛЕНИЕ ============
-        if (heatingState.manualOverrideDetected) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                ),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(AppTheme.Sizes.CardCornerRadius)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(AppTheme.Spacing.Medium),
-                    verticalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Small)
-                ) {
-                    Text(
-                        text = "👤 Обнаружено ручное управление",
-                        fontSize = AppTheme.Typography.HeadlineSmall.first,
-                        fontWeight = AppTheme.Typography.HeadlineSmall.second,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-
-                    // Показываем установленные вручную уровни
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(AppTheme.Spacing.Medium)
-                    ) {
-                        if (heatingState.manualDriverLevel != null) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Водитель",
-                                    fontSize = AppTheme.Typography.BodySmall.first,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                                )
-                                Text(
-                                    text = "Уровень ${heatingState.manualDriverLevel}",
-                                    fontSize = AppTheme.Typography.BodyLarge.first,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                        }
-
-                        if (heatingState.manualPassengerLevel != null) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Пассажир",
-                                    fontSize = AppTheme.Typography.BodySmall.first,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                                )
-                                Text(
-                                    text = "Уровень ${heatingState.manualPassengerLevel}",
-                                    fontSize = AppTheme.Typography.BodyLarge.first,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = "Авто рекомендует: Уровень ${heatingState.recommendedLevel}",
-                        fontSize = AppTheme.Typography.BodyMedium.first,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                    )
-
-                    // Показываем оставшееся время окна тишины И таймера
-                    // tickState обновляется каждую секунду через LaunchedEffect
-                    val currentTime = if (tickState > 0) System.currentTimeMillis() else System.currentTimeMillis()
-                    val silenceRemaining = 5 * 60 - (currentTime - heatingState.lastManualOverrideTime) / 1000
-
-                    if (silenceRemaining > 0) {
-                        Text(
-                            text = "⏸ Окно тишины: ${silenceRemaining / 60}:${String.format(java.util.Locale.getDefault(), "%02d", silenceRemaining % 60)}",
-                            fontSize = AppTheme.Typography.BodySmall.first,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                        )
-                    }
-
-                    // Объяснение условий автоподогрева
-                    Text(
-                        text = buildString {
-                            append("ℹ️ После возврата автоконтроля подогрев включится только если ")
-                            if (adaptiveHeating) {
-                                append("температура ")
-                                when (temperatureSource) {
-                                    "ambient" -> append("снаружи")
-                                    else -> append("в салоне")
-                                }
-                                append(" < 10°C")
-                            } else {
-                                append("температура ")
-                                when (temperatureSource) {
-                                    "ambient" -> append("снаружи")
-                                    else -> append("в салоне")
-                                }
-                                append(" < ${tempThreshold}°C")
-                            }
-
-                            // Показываем текущую температуру для контекста
-                            val currentTemp = if (temperatureSource == "ambient") ambientTemp else cabinTemp
-                            if (currentTemp != null) {
-                                append(". Сейчас: ${currentTemp.toInt()}°C")
-                            }
-
-                            // Упоминание таймера
-                            if (autoOffTimer > 0) {
-                                append(". Таймер $autoOffTimer мин работает и для ручного режима.")
-                            }
-                        },
-                        fontSize = AppTheme.Typography.BodySmall.first,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f),
-                        lineHeight = AppTheme.Typography.BodySmall.first * 1.3f
-                    )
-
-                    // Кнопка возобновления автоконтроля
-                    Button(
-                        onClick = { viewModel.resumeAutoControl() },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AdaptiveColors.primary
-                        )
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(modifier = Modifier.width(AppTheme.Spacing.Small))
-                        Text("Возобновить автоматический контроль")
-                    }
-                }
-            }
-        }
 
         // ============ НАСТРОЙКИ ============
         Section(title = "Настройки") {

@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
  * @param prefsManager для сохранения настроек
  */
 class SettingsViewModel(
+    @Suppress("StaticFieldLeak") // Safe: using Application context from Koin
     private val context: Context,
     private val prefsManager: PreferencesManager,
     private val carPropertyManager: CarPropertyManagerSingleton
@@ -74,6 +75,13 @@ class SettingsViewModel(
      */
     private val _metricsBarPosition = MutableStateFlow(prefsManager.metricsBarPosition)
     val metricsBarPosition: StateFlow<String> = _metricsBarPosition.asStateFlow()
+
+    /**
+     * Высота полоски метрик в dp (40-80).
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
+     */
+    private val _metricsBarHeight = MutableStateFlow(prefsManager.metricsBarHeight)
+    val metricsBarHeight: StateFlow<Int> = _metricsBarHeight.asStateFlow()
 
     /**
      * Количество запусков приложения.
@@ -121,6 +129,7 @@ class SettingsViewModel(
                 _panelEnabled.value = settings.panelEnabled
                 _metricsBarEnabled.value = settings.metricsBarEnabled
                 _metricsBarPosition.value = settings.metricsBarPosition
+                _metricsBarHeight.value = settings.metricsBarHeight
             }
         }
 
@@ -257,6 +266,16 @@ class SettingsViewModel(
     }
 
     /**
+     * Устанавливает высоту полоски метрик.
+     *
+     * @param height высота в dp (40-80)
+     */
+    fun setMetricsBarHeight(height: Int) {
+        prefsManager.metricsBarHeight = height
+        _metricsBarHeight.value = height
+    }
+
+    /**
      * Устанавливает режим темы приложения.
      *
      * @param mode "auto", "light", или "dark"
@@ -329,67 +348,5 @@ class SettingsViewModel(
         com.bjornfree.drivemode.core.DriveModeService.logConsole(
             "Настройки: выбран $driveMode"
         )
-    }
-
-    /**
-     * Принудительно устанавливает выбранный режим вождения.
-     * Использует метод с retry-логикой и проверкой результата.
-     */
-    fun applyDriveMode() {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val modeCode = _selectedDriveMode.value
-                val mode = DriveMode.fromECarXCode(modeCode)
-
-                Log.i(TAG, "Applying drive mode: $mode")
-                com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                    "Принудительная установка: попытка установить $mode"
-                )
-
-                // Проверяем текущий режим ДО установки
-                try {
-                    val currentCode = carPropertyManager.getDriveModeSelection()
-                    val currentMode = DriveMode.fromECarXCode(currentCode)
-                    com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                        "Текущий режим ДО установки: $currentMode"
-                    )
-                    Log.i(TAG, "Current drive mode BEFORE set: $currentMode")
-                } catch (e: Exception) {
-                    com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                        "Не удалось прочитать текущий режим: ${e.message}"
-                    )
-                }
-
-                // Используем метод с retry-логикой и встроенной проверкой
-                val success = carPropertyManager.setCarFunctionValueWithRetry(
-                    com.ecarx.xui.adaptapi.car.vehicle.IDriveMode.DM_FUNC_DRIVE_MODE_SELECT,
-                    mode.ecarxCode
-                )
-
-                if (success) {
-                    // Метод setCarFunctionValueWithRetry уже проверил что значение установилось
-                    _showMessage.emit("Режим ${mode.displayName} установлен и подтвержден ✓")
-                    Log.i(TAG, "Drive mode CONFIRMED: $mode")
-                    com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                        "Принудительная установка: режим ${mode.displayName} ПОДТВЕРЖДЕН ✓"
-                    )
-                } else {
-                    _showMessage.emit("Не удалось установить режим ${mode.displayName}")
-                    Log.e(TAG, "Failed to apply drive mode after retries: $mode")
-                    com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                        "Принудительная установка: ОШИБКА - не удалось установить $mode после 3 попыток"
-                    )
-                    com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                        "Возможные причины: автомобиль в движении, неподходящие условия для смены режима, функция недоступна"
-                    )
-                }
-            } catch (e: Exception) {
-                _showMessage.emit("Ошибка: ${e.message}")
-                Log.e(TAG, "Exception applying drive mode", e)
-                com.bjornfree.drivemode.core.DriveModeService.logConsole(
-                    "Принудительная установка: ИСКЛЮЧЕНИЕ - ${e.message}"
-                )
-            }
-        }
     }
 }

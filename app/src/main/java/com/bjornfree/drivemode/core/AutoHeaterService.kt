@@ -4,10 +4,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.car.VehiclePropertyIds
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -65,11 +63,7 @@ class AutoSeatHeatService : Service() {
          */
         fun start(context: Context) {
             val intent = Intent(context, AutoSeatHeatService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(intent)
         }
 
         /**
@@ -109,6 +103,25 @@ class AutoSeatHeatService : Service() {
     // Car API objects (для управления HVAC)
     private var carObj: Any? = null
     private var carPropertyManagerObj: Any? = null
+
+    // Трекинг последних установленных нами уровней (для адаптивного режима)
+    // Позволяет различать: пользователь изменил вручную VS система хочет изменить уровень
+    @Volatile
+    private var lastSetDriverLevel: Int? = null
+    @Volatile
+    private var lastSetPassengerLevel: Int? = null
+
+    // Флаги блокировки автоконтроля для каждого сидения
+    // true = пользователь изменил вручную, НЕ ТРОГАТЬ до конца поездки
+    @Volatile
+    private var driverManuallyChanged: Boolean = false
+    @Volatile
+    private var passengerManuallyChanged: Boolean = false
+
+    // Отслеживание предыдущего state для детекции изменений настроек в UI
+    private var previousMode: com.bjornfree.drivemode.domain.model.HeatingMode? = null
+    private var previousAdaptive: Boolean? = null
+    private var previousLevel: Int? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -169,6 +182,23 @@ class AutoSeatHeatService : Service() {
     private fun startHeatingListener() {
         heatingJob = scope.launch {
             heatingRepo.heatingState.collect { state ->
+                // Проверяем изменились ли настройки в UI
+                val settingsChanged = (previousMode != null && previousMode != state.mode) ||
+                                      (previousAdaptive != null && previousAdaptive != state.adaptiveHeating) ||
+                                      (previousLevel != null && previousLevel != state.heatingLevel)
+
+                if (settingsChanged) {
+                    log("⚙️ Изменение настроек в UI - СБРОС блокировок для активных сидений")
+                    logToConsole("AutoSeatHeatService: ⚙️ Настройки изменены в UI - возобновление автоконтроля")
+                    resetManualOverrideForMode(state.mode)
+                }
+
+                // Сохраняем текущие настройки для следующей проверки
+                previousMode = state.mode
+                previousAdaptive = state.adaptiveHeating
+                previousLevel = state.heatingLevel
+
+                // Применяем состояние
                 if (state.isActive) {
                     activateSeatHeating(state)
                 } else {
@@ -219,13 +249,6 @@ class AutoSeatHeatService : Service() {
                 return
             }
 
-            // КРИТИЧНО: Проверяем окно "тишины" после ручного вмешательства
-            if (state.isInManualOverrideWindow()) {
-                val elapsed = (System.currentTimeMillis() - state.lastManualOverrideTime) / 1000
-                log("⏸ Окно ручного управления активно (${elapsed}сек) - пропускаем автоконтроль")
-                return
-            }
-
             // Определяем уровень подогрева
             val hvacLevel = if (state.adaptiveHeating) {
                 // Адаптивный режим - уровень зависит от температуры
@@ -266,59 +289,73 @@ class AutoSeatHeatService : Service() {
             // Полный список сидений, которыми управляем (водитель и пассажир)
             val allSeatAreas = listOf(1, 4)
 
-            // Читаем текущие уровни HVAC для всех сидений
+            // УМНАЯ ЛОГИКА ДО КОНЦА ПОЕЗДКИ:
+            // Если пользователь руками изменил сидение - БЛОКИРУЕМ его до:
+            //   1. Выключения зажигания (конец поездки)
+            //   2. Изменения настроек в UI (resetManualOverride)
+
+            // Читаем текущие уровни HVAC
             val currentDriverLevel = getCurrentHVACLevel(1)
             val currentPassengerLevel = getCurrentHVACLevel(4)
 
-            // КРИТИЧНО: Проверяем на ручное вмешательство ТОЛЬКО после первичной установки!
-            // При первом запуске текущие уровни могут быть любыми (часто 0/0), это не вмешательство.
-            // ТАКЖЕ пропускаем проверку если настройки только что изменены программно (НЕ ручное вмешательство).
-            if (state.initialSetupComplete && !state.settingsJustChanged) {
-                var manualOverrideDetected = false
-                var manualDriverLevel: Int? = null
-                var manualPassengerLevel: Int? = null
+            // Вычисляем что мы хотим установить
+            val expectedDriver = if (areas.contains(1)) hvacLevel else 0
+            val expectedPassenger = if (areas.contains(4)) hvacLevel else 0
 
-                for (area in allSeatAreas) {
-                    val expectedLevel = if (areas.contains(area)) hvacLevel else 0
-                    val currentLevel = if (area == 1) currentDriverLevel else currentPassengerLevel
+            // Проверяем каждое сидение отдельно (раздельная блокировка)
 
-                    if (currentLevel != null && currentLevel != expectedLevel) {
-                        // Обнаружено ручное изменение!
-                        manualOverrideDetected = true
-                        if (area == 1) {
-                            manualDriverLevel = currentLevel
-                        } else if (area == 4) {
-                            manualPassengerLevel = currentLevel
-                        }
+            // --- ВОДИТЕЛЬ ---
+            if (!driverManuallyChanged) {
+                // Сравниваем с ПОСЛЕДНИМ УСТАНОВЛЕННЫМ НАМИ уровнем
+                val driverChanged = currentDriverLevel != null &&
+                                    lastSetDriverLevel != null &&
+                                    currentDriverLevel != lastSetDriverLevel
 
-                        val areaName = if (area == 1) "Водитель" else "Пассажир"
-                        log("👤 $areaName: обнаружено ручное изменение (текущий=$currentLevel, ожидалось=$expectedLevel)")
-                        logToConsole("AutoSeatHeatService: 👤 $areaName ручной уровень $currentLevel (авто рекомендует $expectedLevel)")
-                    }
+                if (driverChanged) {
+                    // Пользователь изменил вручную - БЛОКИРУЕМ до конца поездки
+                    driverManuallyChanged = true
+                    log("🚫 Водитель: обнаружено ручное изменение ($lastSetDriverLevel → $currentDriverLevel)")
+                    log("   БЛОКИРОВКА до конца поездки или изменения настроек в UI")
+                    logToConsole("AutoSeatHeatService: 🚫 Водитель изменен вручную - заблокирован до конца поездки")
                 }
-
-                // Если обнаружено ручное вмешательство - НЕ ТРОГАЕМ настройки!
-                if (manualOverrideDetected) {
-                    log("🚫 Обнаружено ручное управление - автоконтроль приостановлен на 5 минут")
-                    logToConsole("AutoSeatHeatService: 🚫 Обнаружено ручное управление - автоподогрев в режиме ожидания")
-
-                    // Уведомляем Repository о ручном вмешательстве (с текущими уровнями для UI)
-                    heatingRepo.notifyManualOverride(
-                        driverLevel = manualDriverLevel,
-                        passengerLevel = manualPassengerLevel,
-                        currentDriverLevel = currentDriverLevel,
-                        currentPassengerLevel = currentPassengerLevel
-                    )
-                    return
-                }
-            } else if (state.settingsJustChanged) {
-                log("⚙ Настройки изменены программно - пропускаем проверку на ручное вмешательство")
-            } else {
-                log("⚙ Первичная установка - пропускаем проверку на ручное вмешательство")
             }
 
-            // Безопасно устанавливаем уровни (нет ручного вмешательства)
+            // --- ПАССАЖИР ---
+            if (!passengerManuallyChanged) {
+                val passengerChanged = currentPassengerLevel != null &&
+                                       lastSetPassengerLevel != null &&
+                                       currentPassengerLevel != lastSetPassengerLevel
+
+                if (passengerChanged) {
+                    passengerManuallyChanged = true
+                    log("🚫 Пассажир: обнаружено ручное изменение ($lastSetPassengerLevel → $currentPassengerLevel)")
+                    log("   БЛОКИРОВКА до конца поездки или изменения настроек в UI")
+                    logToConsole("AutoSeatHeatService: 🚫 Пассажир изменен вручную - заблокирован до конца поездки")
+                }
+            }
+
+            // Если ОБА сидения заблокированы - ничего не делаем
+            if (driverManuallyChanged && passengerManuallyChanged) {
+                log("⏸ Оба сидения заблокированы - пропускаем установку")
+                return
+            }
+
+            // Устанавливаем ТОЛЬКО НЕ ЗАБЛОКИРОВАННЫЕ сидения
+            log("✓ Применение настроек: режим=${state.mode.displayName}, уровень=$hvacLevel")
+
+            var appliedCount = 0
+
             for (area in allSeatAreas) {
+                // Проверяем блокировку для этого сидения
+                val isBlocked = (area == 1 && driverManuallyChanged) ||
+                                (area == 4 && passengerManuallyChanged)
+
+                if (isBlocked) {
+                    val areaName = if (area == 1) "Водитель" else "Пассажир"
+                    log("  $areaName: ПРОПУЩЕНО (заблокировано вручную)")
+                    continue
+                }
+
                 val levelForArea = if (areas.contains(area)) hvacLevel else 0
                 try {
                     setIntPropertyMethod.invoke(
@@ -327,21 +364,28 @@ class AutoSeatHeatService : Service() {
                         area,
                         levelForArea
                     )
+                    val areaName = if (area == 1) "Водитель" else "Пассажир"
+                    log("  $areaName: уровень $levelForArea ✓")
+                    appliedCount++
+
+                    // Сохраняем последний установленный уровень для этого сидения
+                    if (area == 1) {
+                        lastSetDriverLevel = levelForArea
+                    } else if (area == 4) {
+                        lastSetPassengerLevel = levelForArea
+                    }
                 } catch (e: Exception) {
                     log("⚠ Area $area не поддерживается: ${e.message}")
-                    // Не падаем, продолжаем для других area
                 }
             }
 
-            // Уведомляем Repository что установка выполнена успешно
-            // Передаем текущие (только что установленные) уровни для UI
-            val finalDriverLevel = if (areas.contains(1)) hvacLevel else 0
-            val finalPassengerLevel = if (areas.contains(4)) hvacLevel else 0
-
-            heatingRepo.notifySetupComplete(
-                driverLevel = finalDriverLevel,
-                passengerLevel = finalPassengerLevel
-            )
+            if (appliedCount > 0) {
+                val blockedText = buildString {
+                    if (driverManuallyChanged) append(" [Водитель заблокирован]")
+                    if (passengerManuallyChanged) append(" [Пассажир заблокирован]")
+                }
+                logToConsole("AutoSeatHeatService: ✓ Подогрев установлен (${state.mode.displayName}, уровень $hvacLevel)$blockedText")
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка активации подогрева", e)
@@ -383,11 +427,13 @@ class AutoSeatHeatService : Service() {
                         0  // 0 = off
                     )
                 } catch (e: Exception) {
-
                     // Не падаем, продолжаем для других area
                 }
             }
 
+            // Сбрасываем трекинг и блокировки
+            // При следующем включении зажигания - чистый старт
+            resetAllManualOverrides()
 
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка деактивации подогрева", e)
@@ -448,15 +494,13 @@ class AutoSeatHeatService : Service() {
      * Создает notification для foreground service.
      */
     private fun buildNotification(): Notification {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Автоподогрев сидений",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
-        }
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Автоподогрев сидений",
+            NotificationManager.IMPORTANCE_LOW
+        )
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.createNotificationChannel(channel)
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Автоподогрев активен")
@@ -473,6 +517,53 @@ class AutoSeatHeatService : Service() {
         scope.launch {
             driveModeRepo.logConsole(msg)
         }
+    }
+
+    /**
+     * Сбрасывает блокировки ручного управления ИЗБИРАТЕЛЬНО на основе режима.
+     * Если режим "Водитель" - сбрасывает ТОЛЬКО водителя.
+     * Если "Пассажир" - ТОЛЬКО пассажира.
+     * Если "Оба" или "OFF" - оба сидения.
+     *
+     * @param mode текущий режим подогрева
+     */
+    private fun resetManualOverrideForMode(mode: com.bjornfree.drivemode.domain.model.HeatingMode) {
+        when (mode.key) {
+            "driver" -> {
+                // Режим "Водитель" - сбрасываем ТОЛЬКО водителя
+                driverManuallyChanged = false
+                lastSetDriverLevel = null
+                log("Блокировка сброшена: ВОДИТЕЛЬ (режим: ${mode.displayName})")
+                logToConsole("  → Водитель: автоконтроль возобновлен")
+            }
+            "passenger" -> {
+                // Режим "Пассажир" - сбрасываем ТОЛЬКО пассажира
+                passengerManuallyChanged = false
+                lastSetPassengerLevel = null
+                log("Блокировка сброшена: ПАССАЖИР (режим: ${mode.displayName})")
+                logToConsole("  → Пассажир: автоконтроль возобновлен")
+            }
+            "both", "off" -> {
+                // Режим "Оба" или "OFF" - сбрасываем оба
+                driverManuallyChanged = false
+                passengerManuallyChanged = false
+                lastSetDriverLevel = null
+                lastSetPassengerLevel = null
+                log("Блокировки сброшены: ОБА СИДЕНИЯ (режим: ${mode.displayName})")
+                logToConsole("  → Водитель и пассажир: автоконтроль возобновлен")
+            }
+        }
+    }
+
+    /**
+     * Сбрасывает блокировки для всех сидений (при выключении зажигания).
+     */
+    private fun resetAllManualOverrides() {
+        driverManuallyChanged = false
+        passengerManuallyChanged = false
+        lastSetDriverLevel = null
+        lastSetPassengerLevel = null
+        log("Блокировки сброшены для ВСЕХ сидений (зажигание выключено)")
     }
 
     private fun log(msg: String) {

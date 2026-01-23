@@ -135,6 +135,58 @@ class DriveModeApplication : Application() {
                         Log.e(TAG, "Error getting ICarFunction from AdaptAPI", e)
                         tryDirectICarFunctionCreation(carPropertyManager)
                     }
+
+                    // КРИТИЧНО: Получаем IDriveMode для управления режимами вождения
+                    try {
+                        Log.d(TAG, "Trying to get IDriveMode...")
+
+                        // Попытка 1: через AdaptAPI -> getVehicle() -> getDriveMode()
+                        try {
+                            val getVehicle = adaptAPIClass.getMethod("getVehicle")
+                            val vehicleInstance = getVehicle.invoke(adaptAPIInstance)
+                            Log.d(TAG, "Vehicle obtained from AdaptAPI: ${vehicleInstance != null}")
+
+                            if (vehicleInstance != null) {
+                                val vehicleClass = vehicleInstance.javaClass
+                                val getDriveMode = vehicleClass.getMethod("getDriveMode")
+                                val driveModeInstance = getDriveMode.invoke(vehicleInstance)
+                                Log.d(TAG, "IDriveMode obtained from Vehicle: ${driveModeInstance != null}")
+
+                                carPropertyManager.setIDriveMode(driveModeInstance as? com.ecarx.xui.adaptapi.car.vehicle.IDriveMode)
+                                Log.i(TAG, "✓ IDriveMode injected via AdaptAPI!")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed via AdaptAPI.getVehicle(), trying direct Car approach", e)
+
+                            // Попытка 2: через прямой Car.create() -> iDriveMode
+                            try {
+                                val carClass = Class.forName("com.ecarx.xui.adaptapi.car.Car")
+                                val createMethod = carClass.getMethod("create", android.content.Context::class.java)
+                                val carInstance = createMethod.invoke(null, this)
+                                Log.d(TAG, "Car instance created directly for IDriveMode")
+
+                                if (carInstance != null) {
+                                    // Пробуем получить IDriveMode
+                                    try {
+                                        val iDriveModeField = carClass.getField("iDriveMode")
+                                        val driveModeInstance = iDriveModeField.get(carInstance)
+                                        carPropertyManager.setIDriveMode(driveModeInstance as? com.ecarx.xui.adaptapi.car.vehicle.IDriveMode)
+                                        Log.i(TAG, "✓ IDriveMode injected via Car.iDriveMode!")
+                                    } catch (e2: Exception) {
+                                        Log.w(TAG, "No iDriveMode field, trying getDriveMode() method")
+                                        val getDriveModeMethod = carClass.getMethod("getDriveMode")
+                                        val driveModeInstance = getDriveModeMethod.invoke(carInstance)
+                                        carPropertyManager.setIDriveMode(driveModeInstance as? com.ecarx.xui.adaptapi.car.vehicle.IDriveMode)
+                                        Log.i(TAG, "✓ IDriveMode injected via Car.getDriveMode()!")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to get IDriveMode via Car", e)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to get IDriveMode", e)
+                    }
                 } else {
                     Log.e(TAG, "Failed to create AdaptAPI instance - trying direct ICarFunction creation")
                     tryDirectICarFunctionCreation(carPropertyManager)

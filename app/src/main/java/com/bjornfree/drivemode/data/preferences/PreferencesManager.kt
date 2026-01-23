@@ -43,6 +43,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_PANEL_ENABLED = "panel_enabled"
         private const val KEY_METRICS_BAR_ENABLED = "metrics_bar_enabled"
         private const val KEY_METRICS_BAR_POSITION = "metrics_bar_position"
+        private const val KEY_METRICS_BAR_HEIGHT = "metrics_bar_height"
         private const val KEY_DEMO_MODE = "demo_mode"
         private const val KEY_AUTO_DRIVE_MODE_ENABLED = "auto_drive_mode_enabled"
         private const val KEY_SELECTED_DRIVE_MODE = "selected_drive_mode"
@@ -233,6 +234,17 @@ class PreferencesManager(context: Context) {
         }
 
     /**
+     * Высота полоски метрик в dp.
+     * По умолчанию 56dp (стандартная высота).
+     * Диапазон: 40dp - 80dp
+     */
+    var metricsBarHeight: Int
+        get() = prefs.getInt(KEY_METRICS_BAR_HEIGHT, 56)
+        set(value) {
+            prefs.edit().putInt(KEY_METRICS_BAR_HEIGHT, value.coerceIn(40, 80)).apply()
+        }
+
+    /**
      * Demo mode для тестирования без реального автомобиля.
      */
     var demoMode: Boolean
@@ -332,6 +344,7 @@ class PreferencesManager(context: Context) {
     data class OverlaySettings(
         val metricsBarEnabled: Boolean,
         val metricsBarPosition: String,
+        val metricsBarHeight: Int,
         val borderEnabled: Boolean,
         val panelEnabled: Boolean
     )
@@ -371,6 +384,7 @@ class PreferencesManager(context: Context) {
             when (key) {
                 KEY_METRICS_BAR_ENABLED,
                 KEY_METRICS_BAR_POSITION,
+                KEY_METRICS_BAR_HEIGHT,
                 KEY_BORDER_ENABLED,
                 KEY_PANEL_ENABLED -> {
                     trySend(getCurrentOverlaySettings())
@@ -503,6 +517,7 @@ class PreferencesManager(context: Context) {
         return OverlaySettings(
             metricsBarEnabled = metricsBarEnabled,
             metricsBarPosition = metricsBarPosition,
+            metricsBarHeight = metricsBarHeight,
             borderEnabled = borderEnabled,
             panelEnabled = panelEnabled
         )

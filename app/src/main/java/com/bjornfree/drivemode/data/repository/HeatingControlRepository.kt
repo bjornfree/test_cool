@@ -66,22 +66,6 @@ class HeatingControlRepository(
         heatingDecisionMade = false
         heatingActivatedAt = 0L
         disabledByTimer = false
-
-        // ВАЖНО: Смена настроек (prefs) меняет "ожидаемое" значение HVAC.
-        // Устанавливаем settingsJustChanged=true чтобы следующая проверка НЕ считала
-        // изменение настроек ручным вмешательством.
-        // Сбрасываем первичную установку и окно ручного управления.
-        val prev = _heatingState.value
-        _heatingState.value = prev.copy(
-            initialSetupComplete = false,
-            manualOverrideDetected = false,
-            manualDriverLevel = null,
-            manualPassengerLevel = null,
-            lastManualOverrideTime = 0L,
-            currentDriverLevel = null,
-            currentPassengerLevel = null,
-            settingsJustChanged = true  // КРИТИЧНО: Блокируем детекцию вмешательства
-        )
     }
 
     /**
@@ -129,25 +113,20 @@ class HeatingControlRepository(
 
                 // Логика зажигания используется только через ignition.isOn и heatingDecisionMade
 
+                // Обнаружение момента включения зажигания (для логирования)
+                val previousIgnition = _heatingState.value
+                if (ignition.isOn && !previousIgnition.isActive && heatingDecisionMade == false) {
+                    Log.i(TAG, "🚗 IGNITION ON: Starting auto-heating logic evaluation...")
+                    Log.i(TAG, "  Mode: ${currentMode.displayName}, Adaptive: $isAdaptive, Threshold: $threshold°C")
+                    Log.i(TAG, "  Temp source: $temperatureSource, Current temp: ${tempToCheck?.toInt() ?: "N/A"}°C")
+                }
+
                 // При выключении зажигания всегда сбрасываем решение и состояние таймера
                 if (!ignition.isOn) {
                     heatingDecisionMade = false
                     heatingActivatedAt = 0L
                     disabledByTimer = false // Сбрасываем блокировку таймера для следующего запуска
-
-                    // КРИТИЧНО: Сбрасываем флаги при выключении зажигания
-                    // Это гарантирует что при следующем запуске двигателя мы НЕ будем
-                    // считать начальное состояние HVAC (обычно 0/0) ручным вмешательством
-                    val prevState = _heatingState.value
-                    if (prevState.initialSetupComplete || prevState.settingsJustChanged) {
-                        _heatingState.value = prevState.copy(
-                            initialSetupComplete = false,
-                            currentDriverLevel = null,
-                            currentPassengerLevel = null,
-                            settingsJustChanged = false
-                        )
-                        Log.d(TAG, "Ignition OFF: reset state flags for next start")
-                    }
+                    Log.d(TAG, "Ignition OFF: reset decision state for next start")
                 }
 
                 // Проверяем таймер автоотключения
@@ -161,23 +140,9 @@ class HeatingControlRepository(
                 // Если таймер истек - ОТКЛЮЧАЕМ подогрев и блокируем его включение
                 if (isTimerExpired) {
                     Log.i(TAG, "⏱ Timer expired ($autoOffTimerMinutes min) - DISABLING heating")
-
                     disabledByTimer = true
                     heatingActivatedAt = 0L
-
-                    // Сбрасываем окно тишины (если было ручное вмешательство)
-                    val prevState = _heatingState.value
-                    if (prevState.manualOverrideDetected || prevState.settingsJustChanged) {
-                        _heatingState.value = prevState.copy(
-                            manualOverrideDetected = false,
-                            manualDriverLevel = null,
-                            manualPassengerLevel = null,
-                            lastManualOverrideTime = 0L,
-                            settingsJustChanged = false
-                        )
-                    }
-
-                    Log.d(TAG, "Heating disabled by timer - will stay OFF until ignition cycle or manual change")
+                    Log.d(TAG, "Heating disabled by timer - will stay OFF until ignition cycle")
                 }
 
                 // Решение по температуре (адаптив/порог) с учётом режима "проверка только при запуске"
@@ -277,9 +242,6 @@ class HeatingControlRepository(
                         else -> "Неизвестное состояние"
                     }
 
-                    // Сохраняем предыдущие значения ручного управления (если были)
-                    val prevState = _heatingState.value
-
                     _heatingState.value = HeatingState(
                         isActive = shouldBeActive,
                         mode = currentMode,
@@ -289,12 +251,6 @@ class HeatingControlRepository(
                         currentTemp = tempToCheck ?: cabinTemp,
                         temperatureThreshold = threshold,
                         recommendedLevel = recommendedLevel,
-                        // Сохраняем информацию о ручном управлении
-                        manualOverrideDetected = prevState.manualOverrideDetected,
-                        manualDriverLevel = prevState.manualDriverLevel,
-                        manualPassengerLevel = prevState.manualPassengerLevel,
-                        lastManualOverrideTime = prevState.lastManualOverrideTime,
-                        // Передаем время активации для UI (показ таймера)
                         heatingActivatedAt = heatingActivatedAt
                     )
 
@@ -461,96 +417,6 @@ class HeatingControlRepository(
         return prefsManager.temperatureSource
     }
 
-    /**
-     * Уведомляет Repository о ручном вмешательстве пользователя.
-     * Активирует окно "тишины" на 5 минут.
-     * ПЕРЕЗАПУСКАЕТ таймер автоотключения (начинает отсчет заново).
-     * СБРАСЫВАЕТ блокировку disabledByTimer (пользователь явно хочет контроль).
-     * @param driverLevel уровень водителя установленный вручную (для отображения)
-     * @param passengerLevel уровень пассажира установленный вручную (для отображения)
-     * @param currentDriverLevel текущий уровень HVAC водителя
-     * @param currentPassengerLevel текущий уровень HVAC пассажира
-     */
-    fun notifyManualOverride(
-        driverLevel: Int?,
-        passengerLevel: Int?,
-        currentDriverLevel: Int? = null,
-        currentPassengerLevel: Int? = null
-    ) {
-        Log.i(TAG, "Manual override detected: driver=$driverLevel, passenger=$passengerLevel")
-
-        // КРИТИЧНО: Сбрасываем блокировку таймера - пользователь явно хочет управлять!
-        disabledByTimer = false
-
-        // КРИТИЧНО: ПЕРЕЗАПУСКАЕМ таймер автоотключения (не сбрасываем, а начинаем заново)!
-        // Таймер работает для ЛЮБОГО подогрева (авто или ручного).
-        // По истечении времени подогрев ОТКЛЮЧИТСЯ.
-        val autoOffTimerMinutes = prefsManager.autoOffTimerMinutes
-        if (autoOffTimerMinutes > 0) {
-            heatingActivatedAt = System.currentTimeMillis()
-            Log.d(TAG, "Manual override: RESTARTING auto-off timer ($autoOffTimerMinutes min)")
-        } else {
-            heatingActivatedAt = 0L
-            Log.d(TAG, "Manual override: timer disabled (0 min)")
-        }
-
-        // Обновляем state с информацией о ручном вмешательстве
-        _heatingState.value = _heatingState.value.copy(
-            manualOverrideDetected = true,
-            manualDriverLevel = driverLevel,
-            manualPassengerLevel = passengerLevel,
-            lastManualOverrideTime = System.currentTimeMillis(),
-            currentDriverLevel = currentDriverLevel ?: driverLevel,
-            currentPassengerLevel = currentPassengerLevel ?: passengerLevel,
-            heatingActivatedAt = heatingActivatedAt // Обновляем время активации (таймер перезапущен)
-        )
-    }
-
-    /**
-     * Уведомляет Repository что первичная установка HVAC завершена успешно.
-     * После этого начнется проверка на ручное вмешательство.
-     * @param driverLevel текущий уровень HVAC водителя
-     * @param passengerLevel текущий уровень HVAC пассажира
-     */
-    fun notifySetupComplete(driverLevel: Int, passengerLevel: Int) {
-        Log.i(TAG, "Initial HVAC setup complete: driver=$driverLevel, passenger=$passengerLevel")
-
-        // Обновляем state с флагом завершения первичной установки
-        _heatingState.value = _heatingState.value.copy(
-            initialSetupComplete = true,
-            currentDriverLevel = driverLevel,
-            currentPassengerLevel = passengerLevel,
-            settingsJustChanged = false  // Сбрасываем флаг после успешной установки
-        )
-    }
-
-    /**
-     * Возобновляет автоконтроль после ручного вмешательства.
-     * Сбрасывает окно "тишины" и заставляет систему пересчитать состояние.
-     * СБРАСЫВАЕТ блокировку disabledByTimer если была.
-     */
-    fun resumeAutoControl() {
-        Log.i(TAG, "Resuming auto control after manual override")
-
-        // Сохраняем текущие уровни HVAC перед сбросом
-        val currentDriver = _heatingState.value.currentDriverLevel
-        val currentPassenger = _heatingState.value.currentPassengerLevel
-
-        _heatingState.value = _heatingState.value.copy(
-            manualOverrideDetected = false,
-            manualDriverLevel = null,
-            manualPassengerLevel = null,
-            lastManualOverrideTime = 0L,
-            // Сохраняем текущие уровни - они нужны для UI
-            currentDriverLevel = currentDriver,
-            currentPassengerLevel = currentPassenger,
-            // НЕ устанавливаем settingsJustChanged=true здесь, т.к. resetDecisionState() сделает это
-        )
-
-        // Сбрасываем решение чтобы логика пересчиталась
-        // resetDecisionState также сбросит disabledByTimer
-        resetDecisionState("auto control resumed")
-    }
 
     /**
      * Освобождает ресурсы.

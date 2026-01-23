@@ -195,15 +195,6 @@ class AutoHeatingViewModel(
         }
     }
 
-    /**
-     * Возобновляет автоконтроль после ручного вмешательства.
-     * Сбрасывает окно "тишины" и позволяет автоподогреву снова управлять HVAC.
-     */
-    fun resumeAutoControl() {
-        viewModelScope.launch {
-            heatingRepo.resumeAutoControl()
-        }
-    }
 
     /**
      * Получает доступные режимы подогрева для UI.
