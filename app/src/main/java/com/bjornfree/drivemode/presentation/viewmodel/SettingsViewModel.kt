@@ -84,6 +84,13 @@ class SettingsViewModel(
     val metricsBarHeight: StateFlow<Int> = _metricsBarHeight.asStateFlow()
 
     /**
+     * Горизонтальный отступ полоски метрик (0-200dp).
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
+     */
+    private val _metricsBarHorizontalPadding = MutableStateFlow(prefsManager.metricsBarHorizontalPadding)
+    val metricsBarHorizontalPadding: StateFlow<Int> = _metricsBarHorizontalPadding.asStateFlow()
+
+    /**
      * Количество запусков приложения.
      */
     private val _launchCount = MutableStateFlow(prefsManager.launchCount)
@@ -130,6 +137,7 @@ class SettingsViewModel(
                 _metricsBarEnabled.value = settings.metricsBarEnabled
                 _metricsBarPosition.value = settings.metricsBarPosition
                 _metricsBarHeight.value = settings.metricsBarHeight
+                _metricsBarHorizontalPadding.value = settings.metricsBarHorizontalPadding
             }
         }
 
@@ -273,6 +281,16 @@ class SettingsViewModel(
     fun setMetricsBarHeight(height: Int) {
         prefsManager.metricsBarHeight = height
         _metricsBarHeight.value = height
+    }
+
+    /**
+     * Устанавливает горизонтальный отступ полоски метрик.
+     *
+     * @param padding отступ в dp (0-200)
+     */
+    fun setMetricsBarHorizontalPadding(padding: Int) {
+        prefsManager.metricsBarHorizontalPadding = padding
+        _metricsBarHorizontalPadding.value = padding
     }
 
     /**

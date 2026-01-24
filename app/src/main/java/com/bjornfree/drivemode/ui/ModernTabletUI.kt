@@ -223,6 +223,7 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     val metricsBarEnabled by viewModel.metricsBarEnabled.collectAsState()
     val metricsBarPosition by viewModel.metricsBarPosition.collectAsState()
     val metricsBarHeight by viewModel.metricsBarHeight.collectAsState()
+    val metricsBarHorizontalPadding by viewModel.metricsBarHorizontalPadding.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val autoDriveModeEnabled by viewModel.autoDriveModeEnabled.collectAsState()
     val selectedDriveMode by viewModel.selectedDriveMode.collectAsState()

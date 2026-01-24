@@ -44,6 +44,14 @@ class PreferencesManager(context: Context) {
         private const val KEY_METRICS_BAR_ENABLED = "metrics_bar_enabled"
         private const val KEY_METRICS_BAR_POSITION = "metrics_bar_position"
         private const val KEY_METRICS_BAR_HEIGHT = "metrics_bar_height"
+        private const val KEY_METRICS_BAR_HORIZONTAL_PADDING = "metrics_bar_horizontal_padding"
+        // Видимость отдельных метрик в плашке
+        private const val KEY_METRIC_RANGE_VISIBLE = "metric_range_visible"
+        private const val KEY_METRIC_GEAR_VISIBLE = "metric_gear_visible"
+        private const val KEY_METRIC_SPEED_VISIBLE = "metric_speed_visible"
+        private const val KEY_METRIC_MODE_VISIBLE = "metric_mode_visible"
+        private const val KEY_METRIC_TEMPS_VISIBLE = "metric_temps_visible"
+        private const val KEY_METRIC_TIRES_VISIBLE = "metric_tires_visible"
         private const val KEY_DEMO_MODE = "demo_mode"
         private const val KEY_AUTO_DRIVE_MODE_ENABLED = "auto_drive_mode_enabled"
         private const val KEY_SELECTED_DRIVE_MODE = "selected_drive_mode"
@@ -245,6 +253,52 @@ class PreferencesManager(context: Context) {
         }
 
     /**
+     * Горизонтальный отступ полоски метрик от краёв экрана в dp.
+     * По умолчанию 0dp (полная ширина).
+     * Диапазон: 0dp - 200dp (по 0-200 с каждой стороны)
+     * Уменьшает ширину панели, добавляя отступы слева и справа.
+     */
+    var metricsBarHorizontalPadding: Int
+        get() = prefs.getInt(KEY_METRICS_BAR_HORIZONTAL_PADDING, 0)
+        set(value) {
+            prefs.edit().putInt(KEY_METRICS_BAR_HORIZONTAL_PADDING, value.coerceIn(0, 200)).apply()
+        }
+
+    // ========================================
+    // Видимость отдельных метрик в плашке
+    // ========================================
+
+    /** Показывать запас хода (км) */
+    var metricRangeVisible: Boolean
+        get() = prefs.getBoolean(KEY_METRIC_RANGE_VISIBLE, true)
+        set(value) { prefs.edit().putBoolean(KEY_METRIC_RANGE_VISIBLE, value).apply() }
+
+    /** Показывать передачу (D/P/R/N) */
+    var metricGearVisible: Boolean
+        get() = prefs.getBoolean(KEY_METRIC_GEAR_VISIBLE, true)
+        set(value) { prefs.edit().putBoolean(KEY_METRIC_GEAR_VISIBLE, value).apply() }
+
+    /** Показывать скорость (км/ч) */
+    var metricSpeedVisible: Boolean
+        get() = prefs.getBoolean(KEY_METRIC_SPEED_VISIBLE, true)
+        set(value) { prefs.edit().putBoolean(KEY_METRIC_SPEED_VISIBLE, value).apply() }
+
+    /** Показывать режим вождения (ECO/SPORT/...) */
+    var metricModeVisible: Boolean
+        get() = prefs.getBoolean(KEY_METRIC_MODE_VISIBLE, true)
+        set(value) { prefs.edit().putBoolean(KEY_METRIC_MODE_VISIBLE, value).apply() }
+
+    /** Показывать температуры (салон/улица) */
+    var metricTempsVisible: Boolean
+        get() = prefs.getBoolean(KEY_METRIC_TEMPS_VISIBLE, true)
+        set(value) { prefs.edit().putBoolean(KEY_METRIC_TEMPS_VISIBLE, value).apply() }
+
+    /** Показывать давление в шинах */
+    var metricTiresVisible: Boolean
+        get() = prefs.getBoolean(KEY_METRIC_TIRES_VISIBLE, true)
+        set(value) { prefs.edit().putBoolean(KEY_METRIC_TIRES_VISIBLE, value).apply() }
+
+    /**
      * Demo mode для тестирования без реального автомобиля.
      */
     var demoMode: Boolean
@@ -345,8 +399,16 @@ class PreferencesManager(context: Context) {
         val metricsBarEnabled: Boolean,
         val metricsBarPosition: String,
         val metricsBarHeight: Int,
+        val metricsBarHorizontalPadding: Int,
         val borderEnabled: Boolean,
-        val panelEnabled: Boolean
+        val panelEnabled: Boolean,
+        // Видимость отдельных метрик
+        val metricRangeVisible: Boolean,
+        val metricGearVisible: Boolean,
+        val metricSpeedVisible: Boolean,
+        val metricModeVisible: Boolean,
+        val metricTempsVisible: Boolean,
+        val metricTiresVisible: Boolean
     )
 
     /**
@@ -385,8 +447,15 @@ class PreferencesManager(context: Context) {
                 KEY_METRICS_BAR_ENABLED,
                 KEY_METRICS_BAR_POSITION,
                 KEY_METRICS_BAR_HEIGHT,
+                KEY_METRICS_BAR_HORIZONTAL_PADDING,
                 KEY_BORDER_ENABLED,
-                KEY_PANEL_ENABLED -> {
+                KEY_PANEL_ENABLED,
+                KEY_METRIC_RANGE_VISIBLE,
+                KEY_METRIC_GEAR_VISIBLE,
+                KEY_METRIC_SPEED_VISIBLE,
+                KEY_METRIC_MODE_VISIBLE,
+                KEY_METRIC_TEMPS_VISIBLE,
+                KEY_METRIC_TIRES_VISIBLE -> {
                     trySend(getCurrentOverlaySettings())
                 }
             }
@@ -518,8 +587,15 @@ class PreferencesManager(context: Context) {
             metricsBarEnabled = metricsBarEnabled,
             metricsBarPosition = metricsBarPosition,
             metricsBarHeight = metricsBarHeight,
+            metricsBarHorizontalPadding = metricsBarHorizontalPadding,
             borderEnabled = borderEnabled,
-            panelEnabled = panelEnabled
+            panelEnabled = panelEnabled,
+            metricRangeVisible = metricRangeVisible,
+            metricGearVisible = metricGearVisible,
+            metricSpeedVisible = metricSpeedVisible,
+            metricModeVisible = metricModeVisible,
+            metricTempsVisible = metricTempsVisible,
+            metricTiresVisible = metricTiresVisible
         )
     }
 

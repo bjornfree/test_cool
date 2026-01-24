@@ -13,8 +13,13 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -463,9 +468,20 @@ data class DrivingStatusOverlayState(
     val tirePressureRearRight: Int? = null
 )
 
+/**
+ * Callback для изменения настроек overlay из UI.
+ */
+interface OverlaySettingsCallback {
+    fun onHorizontalPaddingChanged(padding: Int)
+    fun onHeightChanged(height: Int)
+    fun onPositionChanged(position: String)  // "top" или "bottom"
+    fun onMetricVisibilityChanged(metric: String, visible: Boolean)
+}
+
 class DrivingStatusOverlayController(
     private val appContext: Context,
-    initialPosition: String = "bottom"
+    initialPosition: String = "bottom",
+    private val settingsCallback: OverlaySettingsCallback? = null
 ) {
 
     companion object {
@@ -478,8 +494,12 @@ class DrivingStatusOverlayController(
          */
         fun getInstance(): DrivingStatusOverlayController? = currentInstance
 
-        private const val COLOR_BG_DARK = 0xF01E1E1E.toInt()
-        private const val COLOR_BG_LIGHT = 0xF0F5F5F5.toInt()
+        // Glass morphism colors (iOS 26 style)
+        private const val GLASS_BG_DARK = 0x66000000  // 40% черный
+        private const val GLASS_BG_LIGHT = 0x66FFFFFF  // 40% белый
+        private const val GLASS_BORDER_DARK = 0x33FFFFFF  // 20% белый border
+        private const val GLASS_BORDER_LIGHT = 0x33000000  // 20% черный border
+
         private const val COLOR_TEXT_DARK_PRIMARY = 0xFFFFFFFF.toInt()
         private const val COLOR_TEXT_DARK_SECONDARY = 0xCCFFFFFF.toInt()
         private const val COLOR_TEXT_LIGHT_PRIMARY = 0xFF1E1E1E.toInt()
@@ -601,12 +621,7 @@ class DrivingStatusOverlayController(
 
                     longPressRunnable = Runnable {
                         longPressTriggered = true
-                        Toast.makeText(
-                            appContext,
-                            "Панель скрыта на 5 секунд",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        hideTemporarily()
+                        showSettingsOverlay()
                     }
                     v.postDelayed(longPressRunnable!!, LONG_PRESS_HIDE_TIMEOUT_MS)
                     true
@@ -652,11 +667,31 @@ class DrivingStatusOverlayController(
 
     private var position: String = initialPosition
     private var height: Int = 56  // Высота в dp (по умолчанию 56dp)
+    private var horizontalPadding: Int = 0   // Горизонтальный отступ от краёв в dp (уменьшает ширину)
 
     private var isDarkTheme: Boolean = true
-    private var bgColor: Int = COLOR_BG_DARK
+    private var bgColor: Int = GLASS_BG_DARK
     private var textColor: Int = COLOR_TEXT_DARK_PRIMARY
     private var textSecondaryColor: Int = COLOR_TEXT_DARK_SECONDARY
+
+    // Видимость отдельных метрик (по умолчанию все включены)
+    private var showRange: Boolean = true
+    private var showGear: Boolean = true
+    private var showSpeed: Boolean = true
+    private var showMode: Boolean = true
+    private var showTemps: Boolean = true
+    private var showTires: Boolean = true
+
+    // Settings overlay (показывается по long press)
+    private var settingsContainer: FrameLayout? = null
+    private var settingsLayoutParams: WindowManager.LayoutParams? = null
+    private var settingsVisible: Boolean = false
+    private var paddingSeekBar: SeekBar? = null
+    private var paddingValueText: TextView? = null
+    private var heightSeekBar: SeekBar? = null
+    private var heightValueText: TextView? = null
+    private var autoHideSettingsRunnable: Runnable? = null
+    private val SETTINGS_AUTO_HIDE_MS = 10000L  // Авто-скрытие через 10 секунд бездействия
 
     /**
      * Вычисляет размер текста в зависимости от высоты плашки.
@@ -711,11 +746,11 @@ class DrivingStatusOverlayController(
 
         isDarkTheme = dark
         if (dark) {
-            bgColor = COLOR_BG_DARK
+            bgColor = GLASS_BG_DARK
             textColor = COLOR_TEXT_DARK_PRIMARY
             textSecondaryColor = COLOR_TEXT_DARK_SECONDARY
         } else {
-            bgColor = COLOR_BG_LIGHT
+            bgColor = GLASS_BG_LIGHT
             textColor = COLOR_TEXT_LIGHT_PRIMARY
             textSecondaryColor = COLOR_TEXT_LIGHT_SECONDARY
         }
@@ -777,6 +812,479 @@ class DrivingStatusOverlayController(
         }
     }
 
+    fun setHorizontalPadding(newPadding: Int) {
+        ensureMainThread()
+        android.util.Log.w("DrivingStatusOverlay", ">>> setHorizontalPadding: вызван (текущая=$horizontalPadding, новая=$newPadding)")
+
+        if (horizontalPadding == newPadding) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> setHorizontalPadding: отступ не изменился, return")
+            return
+        }
+
+        horizontalPadding = newPadding
+        android.util.Log.w("DrivingStatusOverlay", ">>> setHorizontalPadding: отступ обновлен на $horizontalPadding dp")
+
+        // Обновляем ширину панели если уже прикреплены
+        updateLayoutWidth()
+    }
+
+    private fun updateLayoutWidth() {
+        val lp = layoutParams ?: return
+        val c = container ?: return
+
+        val screenWidth = appContext.resources.displayMetrics.widthPixels
+        val paddingPx = (horizontalPadding * density).toInt()
+        val newWidth = screenWidth - (paddingPx * 2)
+
+        lp.width = newWidth.coerceAtLeast((200 * density).toInt())  // Минимум 200dp
+        try {
+            wm.updateViewLayout(c, lp)
+            android.util.Log.w("DrivingStatusOverlay", ">>> updateLayoutWidth: width=${lp.width}px, padding=${paddingPx}px")
+        } catch (e: Throwable) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> updateLayoutWidth: ошибка - ${e.message}")
+        }
+    }
+
+    /**
+     * Устанавливает видимость конкретной метрики.
+     */
+    fun setMetricVisibility(metric: String, visible: Boolean) {
+        ensureMainThread()
+        when (metric) {
+            "range" -> showRange = visible
+            "gear" -> showGear = visible
+            "speed" -> showSpeed = visible
+            "mode" -> showMode = visible
+            "temps" -> showTemps = visible
+            "tires" -> showTires = visible
+        }
+        updateMetricsVisibility()
+    }
+
+    /**
+     * Устанавливает видимость всех метрик сразу.
+     */
+    fun setAllMetricsVisibility(
+        range: Boolean, gear: Boolean, speed: Boolean,
+        mode: Boolean, temps: Boolean, tires: Boolean
+    ) {
+        ensureMainThread()
+        showRange = range
+        showGear = gear
+        showSpeed = speed
+        showMode = mode
+        showTemps = temps
+        showTires = tires
+        updateMetricsVisibility()
+    }
+
+    private fun updateMetricsVisibility() {
+        // Скрываем/показываем и перераспределяем weight
+        val visibleCount = listOf(showRange, showGear, showSpeed, showMode, showTemps, showTires).count { it }
+        if (visibleCount == 0) return
+
+        val baseWeight = 1f
+
+        tvRange?.let { tv ->
+            tv.visibility = if (showRange) View.VISIBLE else View.GONE
+            (tv.layoutParams as? LinearLayout.LayoutParams)?.weight = if (showRange) baseWeight else 0f
+        }
+        tvGear?.let { tv ->
+            tv.visibility = if (showGear) View.VISIBLE else View.GONE
+            (tv.layoutParams as? LinearLayout.LayoutParams)?.weight = if (showGear) baseWeight * 0.5f else 0f
+        }
+        tvSpeed?.let { tv ->
+            tv.visibility = if (showSpeed) View.VISIBLE else View.GONE
+            (tv.layoutParams as? LinearLayout.LayoutParams)?.weight = if (showSpeed) baseWeight * 1.1f else 0f
+        }
+        tvMode?.let { tv ->
+            tv.visibility = if (showMode) View.VISIBLE else View.GONE
+            (tv.layoutParams as? LinearLayout.LayoutParams)?.weight = if (showMode) baseWeight * 0.9f else 0f
+        }
+        tvTemps?.let { tv ->
+            tv.visibility = if (showTemps) View.VISIBLE else View.GONE
+            (tv.layoutParams as? LinearLayout.LayoutParams)?.weight = if (showTemps) baseWeight * 1.2f else 0f
+        }
+        tvTires?.let { tv ->
+            tv.visibility = if (showTires) View.VISIBLE else View.GONE
+            (tv.layoutParams as? LinearLayout.LayoutParams)?.weight = if (showTires) baseWeight * 1.5f else 0f
+        }
+
+        rootRow?.requestLayout()
+    }
+
+    // ========== Settings Overlay ==========
+
+    private fun showSettingsOverlay() {
+        if (settingsVisible) {
+            hideSettingsOverlay()
+            return
+        }
+
+        if (!Settings.canDrawOverlays(appContext)) return
+
+        android.util.Log.w("DrivingStatusOverlay", ">>> showSettingsOverlay: показываем настройки")
+
+        val panelHeight = (320f * density).toInt()  // Увеличили для всех элементов
+        val panelWidth = (300f * density).toInt()
+
+        val lp = WindowManager.LayoutParams(
+            panelWidth,
+            panelHeight,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        settingsLayoutParams = lp
+
+        val rootContainer = FrameLayout(appContext).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+
+        // ScrollView для прокрутки если не влезает
+        val scrollView = ScrollView(appContext).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            isVerticalScrollBarEnabled = false
+        }
+
+        val panel = LinearLayout(appContext).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+
+            val padding = (16f * density).toInt()
+            setPadding(padding, padding, padding, padding)
+
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 20f * density
+                setColor(if (isDarkTheme) 0xF0000000.toInt() else 0xF0FFFFFF.toInt())
+                setStroke(
+                    (1f * density).toInt(),
+                    if (isDarkTheme) GLASS_BORDER_DARK else GLASS_BORDER_LIGHT
+                )
+            }
+        }
+
+        val textPrimary = if (isDarkTheme) COLOR_TEXT_DARK_PRIMARY else COLOR_TEXT_LIGHT_PRIMARY
+        val textSecondary = if (isDarkTheme) COLOR_TEXT_DARK_SECONDARY else COLOR_TEXT_LIGHT_SECONDARY
+
+        // ===== ВЫСОТА ПАНЕЛИ =====
+        val heightTitle = TextView(appContext).apply {
+            text = "Высота панели"
+            setTextColor(textPrimary)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        }
+        panel.addView(heightTitle)
+
+        val heightValue = TextView(appContext).apply {
+            text = "${height} dp"
+            setTextColor(textSecondary)
+            textSize = 12f
+        }
+        heightValueText = heightValue
+        panel.addView(heightValue)
+
+        val heightSeek = SeekBar(appContext).apply {
+            min = 40
+            max = 80
+            progress = height
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        heightValueText?.text = "$progress dp"
+                        setHeight(progress)
+                        settingsCallback?.onHeightChanged(progress)
+                        resetAutoHideTimer()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { resetAutoHideTimer() }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) { resetAutoHideTimer() }
+            })
+        }
+        heightSeekBar = heightSeek
+        panel.addView(heightSeek)
+
+        // ===== ПОЗИЦИЯ =====
+        val positionTitle = TextView(appContext).apply {
+            text = "Позиция"
+            setTextColor(textPrimary)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            val marginTop = (12f * density).toInt()
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = marginTop }
+        }
+        panel.addView(positionTitle)
+
+        val positionRow = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val btnBottom = TextView(appContext).apply {
+            text = if (position == "bottom") "● СНИЗУ" else "○ Снизу"
+            setTextColor(if (position == "bottom") 0xFF4CAF50.toInt() else textSecondary)
+            textSize = 13f
+            typeface = if (position == "bottom") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            gravity = Gravity.CENTER
+            val paddingH = (16f * density).toInt()
+            val paddingV = (8f * density).toInt()
+            setPadding(paddingH, paddingV, paddingH, paddingV)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                if (position != "bottom") {
+                    setPosition("bottom")
+                    settingsCallback?.onPositionChanged("bottom")
+                    // Обновляем UI кнопок
+                    text = "● СНИЗУ"
+                    setTextColor(0xFF4CAF50.toInt())
+                    typeface = Typeface.DEFAULT_BOLD
+                    (positionRow.getChildAt(1) as? TextView)?.apply {
+                        text = "○ Сверху"
+                        setTextColor(textSecondary)
+                        typeface = Typeface.DEFAULT
+                    }
+                    resetAutoHideTimer()
+                }
+            }
+        }
+
+        val btnTop = TextView(appContext).apply {
+            text = if (position == "top") "● СВЕРХУ" else "○ Сверху"
+            setTextColor(if (position == "top") 0xFF4CAF50.toInt() else textSecondary)
+            textSize = 13f
+            typeface = if (position == "top") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            gravity = Gravity.CENTER
+            val paddingH = (16f * density).toInt()
+            val paddingV = (8f * density).toInt()
+            setPadding(paddingH, paddingV, paddingH, paddingV)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                if (position != "top") {
+                    setPosition("top")
+                    settingsCallback?.onPositionChanged("top")
+                    // Обновляем UI кнопок
+                    text = "● СВЕРХУ"
+                    setTextColor(0xFF4CAF50.toInt())
+                    typeface = Typeface.DEFAULT_BOLD
+                    (positionRow.getChildAt(0) as? TextView)?.apply {
+                        text = "○ Снизу"
+                        setTextColor(textSecondary)
+                        typeface = Typeface.DEFAULT
+                    }
+                    resetAutoHideTimer()
+                }
+            }
+        }
+
+        positionRow.addView(btnBottom)
+        positionRow.addView(btnTop)
+        panel.addView(positionRow)
+
+        // ===== БОКОВЫЕ ОТСТУПЫ =====
+        val paddingTitle = TextView(appContext).apply {
+            text = "Боковые отступы"
+            setTextColor(textPrimary)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            val marginTop = (12f * density).toInt()
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = marginTop }
+        }
+        panel.addView(paddingTitle)
+
+        val paddingValue = TextView(appContext).apply {
+            text = "${horizontalPadding} dp"
+            setTextColor(textSecondary)
+            textSize = 12f
+        }
+        paddingValueText = paddingValue
+        panel.addView(paddingValue)
+
+        val paddingSeek = SeekBar(appContext).apply {
+            max = 200
+            progress = horizontalPadding
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        paddingValueText?.text = "$progress dp"
+                        setHorizontalPadding(progress)
+                        settingsCallback?.onHorizontalPaddingChanged(progress)
+                        resetAutoHideTimer()
+                    }
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) { resetAutoHideTimer() }
+                override fun onStopTrackingTouch(seekBar: SeekBar?) { resetAutoHideTimer() }
+            })
+        }
+        paddingSeekBar = paddingSeek
+        panel.addView(paddingSeek)
+
+        // ===== МЕТРИКИ (чекбоксы) =====
+        val metricsTitle = TextView(appContext).apply {
+            text = "Метрики"
+            setTextColor(textPrimary)
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            val marginTop = (12f * density).toInt()
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = marginTop }
+        }
+        panel.addView(metricsTitle)
+
+        // Контейнер для чекбоксов в 2 ряда
+        val checkboxRow1 = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val checkboxRow2 = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // Создаём чекбоксы
+        fun createMetricCheckbox(label: String, metric: String, checked: Boolean): CheckBox {
+            return CheckBox(appContext).apply {
+                text = label
+                isChecked = checked
+                setTextColor(textSecondary)
+                textSize = 12f
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
+                setOnCheckedChangeListener { _, isChecked ->
+                    setMetricVisibility(metric, isChecked)
+                    settingsCallback?.onMetricVisibilityChanged(metric, isChecked)
+                    resetAutoHideTimer()
+                }
+            }
+        }
+
+        // Ряд 1: КМ, ПЕР, СКР
+        checkboxRow1.addView(createMetricCheckbox("КМ", "range", showRange))
+        checkboxRow1.addView(createMetricCheckbox("ПЕР", "gear", showGear))
+        checkboxRow1.addView(createMetricCheckbox("СКР", "speed", showSpeed))
+
+        // Ряд 2: РЕЖ, °C, ШИН
+        checkboxRow2.addView(createMetricCheckbox("РЕЖ", "mode", showMode))
+        checkboxRow2.addView(createMetricCheckbox("°C", "temps", showTemps))
+        checkboxRow2.addView(createMetricCheckbox("ШИН", "tires", showTires))
+
+        panel.addView(checkboxRow1)
+        panel.addView(checkboxRow2)
+
+        // ===== КНОПКА ЗАКРЫТЬ =====
+        val closeBtn = TextView(appContext).apply {
+            text = "[ ЗАКРЫТЬ ]"
+            setTextColor(if (isDarkTheme) 0xFFFF6B6B.toInt() else 0xFFD32F2F.toInt())
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            gravity = Gravity.CENTER
+            val marginTop = (16f * density).toInt()
+            val paddingV = (10f * density).toInt()
+            setPadding(0, paddingV, 0, paddingV)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = marginTop }
+            setOnClickListener { hideSettingsOverlay() }
+        }
+        panel.addView(closeBtn)
+
+        scrollView.addView(panel)
+        rootContainer.addView(scrollView)
+
+        // Обработка тапа вне панели
+        rootContainer.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                hideSettingsOverlay()
+                true
+            } else {
+                resetAutoHideTimer()
+                false
+            }
+        }
+
+        try {
+            wm.addView(rootContainer, lp)
+            settingsContainer = rootContainer
+            settingsVisible = true
+            startAutoHideTimer()
+            android.util.Log.w("DrivingStatusOverlay", ">>> showSettingsOverlay: настройки показаны")
+        } catch (e: Exception) {
+            android.util.Log.e("DrivingStatusOverlay", ">>> showSettingsOverlay: ошибка", e)
+        }
+    }
+
+    private fun hideSettingsOverlay() {
+        autoHideSettingsRunnable?.let { settingsContainer?.removeCallbacks(it) }
+        autoHideSettingsRunnable = null
+
+        val c = settingsContainer
+        if (c != null) {
+            try {
+                wm.removeView(c)
+            } catch (_: Throwable) {}
+        }
+        settingsContainer = null
+        settingsLayoutParams = null
+        settingsVisible = false
+        paddingSeekBar = null
+        paddingValueText = null
+        heightSeekBar = null
+        heightValueText = null
+        android.util.Log.w("DrivingStatusOverlay", ">>> hideSettingsOverlay: настройки скрыты")
+    }
+
+    private fun startAutoHideTimer() {
+        autoHideSettingsRunnable?.let { settingsContainer?.removeCallbacks(it) }
+        autoHideSettingsRunnable = Runnable { hideSettingsOverlay() }
+        settingsContainer?.postDelayed(autoHideSettingsRunnable!!, SETTINGS_AUTO_HIDE_MS)
+    }
+
+    private fun resetAutoHideTimer() {
+        autoHideSettingsRunnable?.let { settingsContainer?.removeCallbacks(it) }
+        autoHideSettingsRunnable = Runnable { hideSettingsOverlay() }
+        settingsContainer?.postDelayed(autoHideSettingsRunnable!!, SETTINGS_AUTO_HIDE_MS)
+    }
+
     fun updateStatus(state: DrivingStatusOverlayState) {
         ensureMainThread()
         if (!enabledInitialized || !enabled) return
@@ -817,6 +1325,10 @@ class DrivingStatusOverlayController(
     fun destroy() {
         ensureMainThread()
         android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: вызван (attached=$attached, position=$position)")
+
+        // Скрываем настройки если открыты
+        hideSettingsOverlay()
+
         detachView()
 
         if (currentInstance === this) {
@@ -851,8 +1363,13 @@ class DrivingStatusOverlayController(
 
         val heightPx = (height.toFloat() * density).toInt()
 
+        // Вычисляем ширину с учётом горизонтальных отступов
+        val screenWidth = appContext.resources.displayMetrics.widthPixels
+        val paddingPx = (horizontalPadding * density).toInt()
+        val panelWidth = (screenWidth - (paddingPx * 2)).coerceAtLeast((200 * density).toInt())
+
         val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            panelWidth,
             heightPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -1166,7 +1683,8 @@ class DrivingStatusOverlayController(
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
 
-            val radius = 16f * density
+            // Glass morphism: увеличенное скругление (20dp вместо 16dp)
+            val radius = 20f * density
             cornerRadii = if (position == "top") {
                 floatArrayOf(
                     0f, 0f,
@@ -1183,7 +1701,14 @@ class DrivingStatusOverlayController(
                 )
             }
 
+            // Glass morphism: полупрозрачный фон
             setColor(bgColor)
+
+            // Glass morphism: тонкая обводка для эффекта стекла
+            setStroke(
+                (1f * density).toInt(),
+                if (isDarkTheme) GLASS_BORDER_DARK else GLASS_BORDER_LIGHT
+            )
         }
     }
 }

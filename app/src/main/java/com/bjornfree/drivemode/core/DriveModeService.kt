@@ -24,6 +24,7 @@ import com.bjornfree.drivemode.ui.theme.ModePanelOverlayController
 import com.bjornfree.drivemode.data.repository.VehicleMetricsRepository
 import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayController
 import com.bjornfree.drivemode.ui.theme.DrivingStatusOverlayState
+import com.bjornfree.drivemode.ui.theme.OverlaySettingsCallback
 import com.bjornfree.drivemode.data.constants.DriveMode as DriveModeEnum
 import kotlinx.coroutines.*
 import org.koin.android.ext.android.inject
@@ -231,9 +232,36 @@ class DriveModeService : Service() {
         borderOverlay = BorderOverlayController(applicationContext)
         modePanelOverlayController = ModePanelOverlayController(applicationContext)
         // КРИТИЧНО: Передаем сохраненную позицию при создании, чтобы избежать дублирования
+        // Callback для сохранения настроек из overlay UI
+        val overlaySettingsCallback = object : OverlaySettingsCallback {
+            override fun onHorizontalPaddingChanged(padding: Int) {
+                prefsManager.metricsBarHorizontalPadding = padding
+                log("Overlay settings: horizontal padding → ${padding}dp")
+            }
+            override fun onHeightChanged(height: Int) {
+                prefsManager.metricsBarHeight = height
+                log("Overlay settings: height → ${height}dp")
+            }
+            override fun onPositionChanged(position: String) {
+                prefsManager.metricsBarPosition = position
+                log("Overlay settings: position → $position")
+            }
+            override fun onMetricVisibilityChanged(metric: String, visible: Boolean) {
+                when (metric) {
+                    "range" -> prefsManager.metricRangeVisible = visible
+                    "gear" -> prefsManager.metricGearVisible = visible
+                    "speed" -> prefsManager.metricSpeedVisible = visible
+                    "mode" -> prefsManager.metricModeVisible = visible
+                    "temps" -> prefsManager.metricTempsVisible = visible
+                    "tires" -> prefsManager.metricTiresVisible = visible
+                }
+                log("Overlay settings: $metric → ${if (visible) "ON" else "OFF"}")
+            }
+        }
         drivingStatusOverlay = DrivingStatusOverlayController(
             applicationContext,
-            initialPosition = prefsManager.metricsBarPosition
+            initialPosition = prefsManager.metricsBarPosition,
+            settingsCallback = overlaySettingsCallback
         )
         log("UI: граница, панель и нижняя полоса статуса инициализированы")
 
@@ -272,8 +300,16 @@ class DriveModeService : Service() {
             var lastMetricsBarEnabled = false  // Инициализируем как false
             var lastMetricsBarPosition = ""
             var lastMetricsBarHeight = 56  // По умолчанию 56dp
+            var lastMetricsBarHorizontalPadding = 0   // По умолчанию 0dp
             var lastBorderEnabled = false
             var lastPanelEnabled = false
+            // Видимость метрик
+            var lastMetricRange = true
+            var lastMetricGear = true
+            var lastMetricSpeed = true
+            var lastMetricMode = true
+            var lastMetricTemps = true
+            var lastMetricTires = true
 
             // Подписываемся на изменения настроек через Flow
             prefsManager.overlaySettingsFlow.collect { settings ->
@@ -301,6 +337,48 @@ class DriveModeService : Service() {
                     }
                     log("Metrics bar height: ${settings.metricsBarHeight}dp")
                     lastMetricsBarHeight = settings.metricsBarHeight
+                }
+
+                // ========== METRICS BAR HORIZONTAL PADDING ==========
+                // Устанавливаем горизонтальный отступ также ДО enabled
+
+                if (settings.metricsBarHorizontalPadding != lastMetricsBarHorizontalPadding || isFirstCollect) {
+                    withContext(Dispatchers.Main.immediate) {
+                        requireMainThread()
+                        drivingStatusOverlay.setHorizontalPadding(settings.metricsBarHorizontalPadding)
+                    }
+                    log("Metrics bar horizontal padding: ${settings.metricsBarHorizontalPadding}dp")
+                    lastMetricsBarHorizontalPadding = settings.metricsBarHorizontalPadding
+                }
+
+                // ========== METRIC VISIBILITY ==========
+                // Применяем видимость метрик
+
+                val metricsChanged = settings.metricRangeVisible != lastMetricRange ||
+                        settings.metricGearVisible != lastMetricGear ||
+                        settings.metricSpeedVisible != lastMetricSpeed ||
+                        settings.metricModeVisible != lastMetricMode ||
+                        settings.metricTempsVisible != lastMetricTemps ||
+                        settings.metricTiresVisible != lastMetricTires
+
+                if (metricsChanged || isFirstCollect) {
+                    withContext(Dispatchers.Main.immediate) {
+                        requireMainThread()
+                        drivingStatusOverlay.setAllMetricsVisibility(
+                            range = settings.metricRangeVisible,
+                            gear = settings.metricGearVisible,
+                            speed = settings.metricSpeedVisible,
+                            mode = settings.metricModeVisible,
+                            temps = settings.metricTempsVisible,
+                            tires = settings.metricTiresVisible
+                        )
+                    }
+                    lastMetricRange = settings.metricRangeVisible
+                    lastMetricGear = settings.metricGearVisible
+                    lastMetricSpeed = settings.metricSpeedVisible
+                    lastMetricMode = settings.metricModeVisible
+                    lastMetricTemps = settings.metricTempsVisible
+                    lastMetricTires = settings.metricTiresVisible
                 }
 
                 // ========== METRICS BAR ENABLED ==========
