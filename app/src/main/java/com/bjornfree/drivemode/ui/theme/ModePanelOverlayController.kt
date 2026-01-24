@@ -785,6 +785,8 @@ class DrivingStatusOverlayController(
         if (wasAttached) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: пересоздаем overlay")
             ensureAttached()
+            // КРИТИЧНО: Применяем сохранённую видимость метрик после пересоздания
+            updateMetricsVisibility()
         }
     }
 
@@ -809,6 +811,8 @@ class DrivingStatusOverlayController(
         if (wasAttached) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: пересоздаем overlay")
             ensureAttached()
+            // КРИТИЧНО: Применяем сохранённую видимость метрик после пересоздания
+            updateMetricsVisibility()
         }
     }
 
@@ -925,8 +929,8 @@ class DrivingStatusOverlayController(
 
         android.util.Log.w("DrivingStatusOverlay", ">>> showSettingsOverlay: показываем настройки")
 
-        val panelHeight = (320f * density).toInt()  // Увеличили для всех элементов
-        val panelWidth = (300f * density).toInt()
+        val panelHeight = (380f * density).toInt()  // Увеличенная высота для крупных кнопок позиции
+        val panelWidth = (320f * density).toInt()  // Немного шире для комфорта
 
         val lp = WindowManager.LayoutParams(
             panelWidth,
@@ -987,8 +991,11 @@ class DrivingStatusOverlayController(
         }
         panel.addView(heightTitle)
 
+        // Получаем актуальное значение высоты (с ограничением в допустимый диапазон)
+        val currentHeight = height.coerceIn(40, 80)
+
         val heightValue = TextView(appContext).apply {
-            text = "${height} dp"
+            text = "$currentHeight dp"
             setTextColor(textSecondary)
             textSize = 12f
         }
@@ -998,11 +1005,12 @@ class DrivingStatusOverlayController(
         val heightSeek = SeekBar(appContext).apply {
             min = 40
             max = 80
-            progress = height
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            // Устанавливаем progress ПОСЛЕ min/max для корректной работы
+            progress = currentHeight
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (fromUser) {
@@ -1021,11 +1029,11 @@ class DrivingStatusOverlayController(
 
         // ===== ПОЗИЦИЯ =====
         val positionTitle = TextView(appContext).apply {
-            text = "Позиция"
+            text = "Позиция панели"
             setTextColor(textPrimary)
             textSize = 14f
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            val marginTop = (12f * density).toInt()
+            val marginTop = (16f * density).toInt()
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1033,67 +1041,104 @@ class DrivingStatusOverlayController(
         }
         panel.addView(positionTitle)
 
+        // Контейнер для кнопок позиции с отступом
         val positionRow = LinearLayout(appContext).apply {
             orientation = LinearLayout.HORIZONTAL
+            val marginTop = (8f * density).toInt()
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            ).apply {
+                topMargin = marginTop
+            }
         }
 
-        val btnBottom = TextView(appContext).apply {
-            text = if (position == "bottom") "● СНИЗУ" else "○ Снизу"
-            setTextColor(if (position == "bottom") 0xFF4CAF50.toInt() else textSecondary)
-            textSize = 13f
-            typeface = if (position == "bottom") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            gravity = Gravity.CENTER
-            val paddingH = (16f * density).toInt()
-            val paddingV = (8f * density).toInt()
-            setPadding(paddingH, paddingV, paddingH, paddingV)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener {
-                if (position != "bottom") {
-                    setPosition("bottom")
-                    settingsCallback?.onPositionChanged("bottom")
-                    // Обновляем UI кнопок
-                    text = "● СНИЗУ"
-                    setTextColor(0xFF4CAF50.toInt())
-                    typeface = Typeface.DEFAULT_BOLD
-                    (positionRow.getChildAt(1) as? TextView)?.apply {
-                        text = "○ Сверху"
-                        setTextColor(textSecondary)
-                        typeface = Typeface.DEFAULT
+        // Цвета для активной/неактивной кнопки
+        val activeColor = 0xFF4CAF50.toInt()
+        val activeBgColor = 0x334CAF50  // 20% зеленый
+        val inactiveBgColor = if (isDarkTheme) 0x33FFFFFF else 0x33000000  // 20% белый/черный
+
+        // Создаём кнопки как "карточки" для лучшего UX
+        fun createPositionButton(label: String, isActive: Boolean): TextView {
+            return TextView(appContext).apply {
+                text = label
+                setTextColor(if (isActive) activeColor else textSecondary)
+                textSize = 16f  // Увеличенный размер текста
+                typeface = if (isActive) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                gravity = Gravity.CENTER
+                val paddingH = (20f * density).toInt()
+                val paddingV = (14f * density).toInt()  // Увеличенный вертикальный padding
+                setPadding(paddingH, paddingV, paddingH, paddingV)
+                val margin = (6f * density).toInt()
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = margin
+                    marginEnd = margin
+                }
+                // Фоновая карточка
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f * density
+                    setColor(if (isActive) activeBgColor else inactiveBgColor)
+                    if (isActive) {
+                        setStroke((2f * density).toInt(), activeColor)
                     }
-                    resetAutoHideTimer()
                 }
             }
         }
 
-        val btnTop = TextView(appContext).apply {
-            text = if (position == "top") "● СВЕРХУ" else "○ Сверху"
-            setTextColor(if (position == "top") 0xFF4CAF50.toInt() else textSecondary)
-            textSize = 13f
-            typeface = if (position == "top") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            gravity = Gravity.CENTER
-            val paddingH = (16f * density).toInt()
-            val paddingV = (8f * density).toInt()
-            setPadding(paddingH, paddingV, paddingH, paddingV)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener {
-                if (position != "top") {
-                    setPosition("top")
-                    settingsCallback?.onPositionChanged("top")
-                    // Обновляем UI кнопок
-                    text = "● СВЕРХУ"
-                    setTextColor(0xFF4CAF50.toInt())
-                    typeface = Typeface.DEFAULT_BOLD
-                    (positionRow.getChildAt(0) as? TextView)?.apply {
-                        text = "○ Снизу"
-                        setTextColor(textSecondary)
-                        typeface = Typeface.DEFAULT
-                    }
-                    resetAutoHideTimer()
+        val btnBottom = createPositionButton("⬇ СНИЗУ", position == "bottom")
+        val btnTop = createPositionButton("⬆ СВЕРХУ", position == "top")
+
+        // Обработчики нажатий
+        btnBottom.setOnClickListener {
+            if (position != "bottom") {
+                setPosition("bottom")
+                settingsCallback?.onPositionChanged("bottom")
+                // Обновляем UI
+                btnBottom.text = "⬇ СНИЗУ"
+                btnBottom.setTextColor(activeColor)
+                btnBottom.typeface = Typeface.DEFAULT_BOLD
+                btnBottom.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f * density
+                    setColor(activeBgColor)
+                    setStroke((2f * density).toInt(), activeColor)
                 }
+                btnTop.text = "⬆ СВЕРХУ"
+                btnTop.setTextColor(textSecondary)
+                btnTop.typeface = Typeface.DEFAULT
+                btnTop.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f * density
+                    setColor(inactiveBgColor)
+                }
+                resetAutoHideTimer()
+            }
+        }
+
+        btnTop.setOnClickListener {
+            if (position != "top") {
+                setPosition("top")
+                settingsCallback?.onPositionChanged("top")
+                // Обновляем UI
+                btnTop.text = "⬆ СВЕРХУ"
+                btnTop.setTextColor(activeColor)
+                btnTop.typeface = Typeface.DEFAULT_BOLD
+                btnTop.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f * density
+                    setColor(activeBgColor)
+                    setStroke((2f * density).toInt(), activeColor)
+                }
+                btnBottom.text = "⬇ СНИЗУ"
+                btnBottom.setTextColor(textSecondary)
+                btnBottom.typeface = Typeface.DEFAULT
+                btnBottom.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f * density
+                    setColor(inactiveBgColor)
+                }
+                resetAutoHideTimer()
             }
         }
 
@@ -1115,8 +1160,11 @@ class DrivingStatusOverlayController(
         }
         panel.addView(paddingTitle)
 
+        // Получаем актуальное значение отступа
+        val currentPadding = horizontalPadding.coerceIn(0, 200)
+
         val paddingValue = TextView(appContext).apply {
-            text = "${horizontalPadding} dp"
+            text = "$currentPadding dp"
             setTextColor(textSecondary)
             textSize = 12f
         }
@@ -1125,11 +1173,12 @@ class DrivingStatusOverlayController(
 
         val paddingSeek = SeekBar(appContext).apply {
             max = 200
-            progress = horizontalPadding
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            // Устанавливаем progress ПОСЛЕ max для корректной работы
+            progress = currentPadding
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (fromUser) {
@@ -1312,7 +1361,17 @@ class DrivingStatusOverlayController(
 
         val modeText = state.modeTitle?.takeIf { it.isNotBlank() } ?: "—"
         tvMode?.text = modeText
-        tvMode?.setTextColor(getModeColor(state.modeTitle))
+        val modeColor = getModeColor(state.modeTitle)
+        tvMode?.setTextColor(modeColor)
+        // Обновляем обводку в цвет режима (затемнённый) для лучшей читаемости
+        val shadowColor = when (state.modeTitle?.lowercase()) {
+            "sport" -> 0xCC990000.toInt()   // Тёмно-красный
+            "eco" -> 0xCC006600.toInt()     // Тёмно-зелёный
+            "comfort" -> 0xCC003366.toInt() // Тёмно-синий
+            "adaptive" -> 0xCC330066.toInt() // Тёмно-фиолетовый
+            else -> Color.BLACK
+        }
+        tvMode?.setShadowLayer(4f * density, 0f, 0f, shadowColor)
 
         tvGear?.text = state.gear?.takeIf { it.isNotBlank() } ?: "—"
         tvSpeed?.text = state.speedKmh?.let { "$it км/ч" } ?: "— км/ч"
@@ -1463,8 +1522,10 @@ class DrivingStatusOverlayController(
             text = "—"
             setTextColor(textColor)
             textSize = calculateTextSize(19f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             gravity = Gravity.CENTER
+            // Обводка текста для лучшей читаемости на полупрозрачном фоне
+            setShadowLayer(4f * density, 0f, 0f, Color.BLACK)
         }
 
         tvTemps = TextView(appContext).apply {

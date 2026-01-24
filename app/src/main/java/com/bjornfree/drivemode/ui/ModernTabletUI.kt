@@ -221,9 +221,7 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     val borderEnabled by viewModel.borderEnabled.collectAsState()
     val panelEnabled by viewModel.panelEnabled.collectAsState()
     val metricsBarEnabled by viewModel.metricsBarEnabled.collectAsState()
-    val metricsBarPosition by viewModel.metricsBarPosition.collectAsState()
-    val metricsBarHeight by viewModel.metricsBarHeight.collectAsState()
-    val metricsBarHorizontalPadding by viewModel.metricsBarHorizontalPadding.collectAsState()
+    // Позиция и высота полоски настраиваются через overlay (долгое нажатие на плашку)
     val themeMode by viewModel.themeMode.collectAsState()
     val autoDriveModeEnabled by viewModel.autoDriveModeEnabled.collectAsState()
     val selectedDriveMode by viewModel.selectedDriveMode.collectAsState()
@@ -398,110 +396,24 @@ fun SettingsTab(viewModel: SettingsViewModel) {
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Нижняя полоска метрик",
+                        "Полоска метрик",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "Отображать полоску с режимом, передачей, скоростью, запасом хода, температурой и давлением в шинах",
+                        "Режим, передача, скорость, запас хода, температура и давление в шинах",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Долгое нажатие на плашку → настройки позиции, высоты и метрик",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Switch(
                     checked = metricsBarEnabled,
                     onCheckedChange = { viewModel.setMetricsBarEnabled(it) }
-                )
-            }
-        }
-
-        // Metrics Bar Position
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    "Положение полоски метрик",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Кнопка "Снизу"
-                    FilterChip(
-                        selected = metricsBarPosition == "bottom",
-                        onClick = { viewModel.setMetricsBarPosition("bottom") },
-                        label = { Text("Снизу") },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    // Кнопка "Сверху"
-                    FilterChip(
-                        selected = metricsBarPosition == "top",
-                        onClick = { viewModel.setMetricsBarPosition("top") },
-                        label = { Text("Сверху") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Text(
-                    when (metricsBarPosition) {
-                        "bottom" -> "Полоска отображается внизу экрана"
-                        "top" -> "Полоска отображается вверху экрана"
-                        else -> "Положение по умолчанию"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Высота полоски метрик
-                Text(
-                    "Высота полоски",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Компактная (40dp)
-                    FilterChip(
-                        selected = metricsBarHeight == 40,
-                        onClick = { viewModel.setMetricsBarHeight(40) },
-                        label = { Text("Компакт") },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    // Стандартная (56dp)
-                    FilterChip(
-                        selected = metricsBarHeight == 56,
-                        onClick = { viewModel.setMetricsBarHeight(56) },
-                        label = { Text("Стандарт") },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    // Увеличенная (70dp)
-                    FilterChip(
-                        selected = metricsBarHeight == 70,
-                        onClick = { viewModel.setMetricsBarHeight(70) },
-                        label = { Text("Большая") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Text(
-                    "Высота: ${metricsBarHeight}dp",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
