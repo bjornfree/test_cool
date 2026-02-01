@@ -221,6 +221,8 @@ fun SettingsTab(viewModel: SettingsViewModel) {
     val borderEnabled by viewModel.borderEnabled.collectAsState()
     val panelEnabled by viewModel.panelEnabled.collectAsState()
     val metricsBarEnabled by viewModel.metricsBarEnabled.collectAsState()
+    val metricsBarDisplayMode by viewModel.metricsBarDisplayMode.collectAsState()
+    val metricsBarDisplayDuration by viewModel.metricsBarDisplayDuration.collectAsState()
     // Позиция и высота полоски настраиваются через overlay (долгое нажатие на плашку)
     val themeMode by viewModel.themeMode.collectAsState()
     val autoDriveModeEnabled by viewModel.autoDriveModeEnabled.collectAsState()
@@ -415,6 +417,78 @@ fun SettingsTab(viewModel: SettingsViewModel) {
                     checked = metricsBarEnabled,
                     onCheckedChange = { viewModel.setMetricsBarEnabled(it) }
                 )
+            }
+        }
+
+        // Дополнительные настройки плашки (показываются только когда плашка включена)
+        if (metricsBarEnabled) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "Режим отображения",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = metricsBarDisplayMode == "always",
+                            onClick = { viewModel.setMetricsBarDisplayMode("always") },
+                            label = { Text("Всегда") },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = metricsBarDisplayMode == "temporary",
+                            onClick = { viewModel.setMetricsBarDisplayMode("temporary") },
+                            label = { Text("По событиям") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Text(
+                        when (metricsBarDisplayMode) {
+                            "always" -> "Плашка отображается постоянно"
+                            "temporary" -> "Плашка появляется при: смене передачи, режима вождения, критическом давлении в шинах, изменении температуры"
+                            else -> ""
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Настройка времени показа (только для временного режима)
+                    if (metricsBarDisplayMode == "temporary") {
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            "Время показа: ${metricsBarDisplayDuration} сек",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            (2..5).forEach { duration ->
+                                FilterChip(
+                                    selected = metricsBarDisplayDuration == duration,
+                                    onClick = { viewModel.setMetricsBarDisplayDuration(duration) },
+                                    label = { Text("${duration}с") },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 

@@ -301,6 +301,8 @@ class DriveModeService : Service() {
             var lastMetricsBarPosition = ""
             var lastMetricsBarHeight = 56  // По умолчанию 56dp
             var lastMetricsBarHorizontalPadding = 0   // По умолчанию 0dp
+            var lastMetricsBarDisplayMode = "always"  // Режим отображения
+            var lastMetricsBarDisplayDuration = 3     // Время показа (сек)
             var lastBorderEnabled = false
             var lastPanelEnabled = false
             // Видимость метрик
@@ -349,6 +351,31 @@ class DriveModeService : Service() {
                     }
                     log("Metrics bar horizontal padding: ${settings.metricsBarHorizontalPadding}dp")
                     lastMetricsBarHorizontalPadding = settings.metricsBarHorizontalPadding
+                }
+
+                // ========== METRICS BAR DISPLAY MODE ==========
+                // Устанавливаем режим отображения ("always" или "temporary") также ДО enabled
+
+                if (settings.metricsBarDisplayMode != lastMetricsBarDisplayMode || isFirstCollect) {
+                    withContext(Dispatchers.Main.immediate) {
+                        requireMainThread()
+                        drivingStatusOverlay.setDisplayMode(settings.metricsBarDisplayMode)
+                    }
+                    val modeText = if (settings.metricsBarDisplayMode == "always") "постоянно" else "по событиям"
+                    log("Metrics bar display mode: $modeText")
+                    lastMetricsBarDisplayMode = settings.metricsBarDisplayMode
+                }
+
+                // ========== METRICS BAR DISPLAY DURATION ==========
+                // Устанавливаем время показа во временном режиме
+
+                if (settings.metricsBarDisplayDuration != lastMetricsBarDisplayDuration || isFirstCollect) {
+                    withContext(Dispatchers.Main.immediate) {
+                        requireMainThread()
+                        drivingStatusOverlay.setDisplayDuration(settings.metricsBarDisplayDuration)
+                    }
+                    log("Metrics bar display duration: ${settings.metricsBarDisplayDuration} сек")
+                    lastMetricsBarDisplayDuration = settings.metricsBarDisplayDuration
                 }
 
                 // ========== METRIC VISIBILITY ==========

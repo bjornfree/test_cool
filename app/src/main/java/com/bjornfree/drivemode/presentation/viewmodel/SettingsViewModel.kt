@@ -91,6 +91,20 @@ class SettingsViewModel(
     val metricsBarHorizontalPadding: StateFlow<Int> = _metricsBarHorizontalPadding.asStateFlow()
 
     /**
+     * Режим отображения полоски метрик ("always" или "temporary").
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
+     */
+    private val _metricsBarDisplayMode = MutableStateFlow(prefsManager.metricsBarDisplayMode)
+    val metricsBarDisplayMode: StateFlow<String> = _metricsBarDisplayMode.asStateFlow()
+
+    /**
+     * Время показа полоски метрик во временном режиме (2-5 сек).
+     * РЕАКТИВНО подписан на overlaySettingsFlow.
+     */
+    private val _metricsBarDisplayDuration = MutableStateFlow(prefsManager.metricsBarDisplayDuration)
+    val metricsBarDisplayDuration: StateFlow<Int> = _metricsBarDisplayDuration.asStateFlow()
+
+    /**
      * Количество запусков приложения.
      */
     private val _launchCount = MutableStateFlow(prefsManager.launchCount)
@@ -138,6 +152,8 @@ class SettingsViewModel(
                 _metricsBarPosition.value = settings.metricsBarPosition
                 _metricsBarHeight.value = settings.metricsBarHeight
                 _metricsBarHorizontalPadding.value = settings.metricsBarHorizontalPadding
+                _metricsBarDisplayMode.value = settings.metricsBarDisplayMode
+                _metricsBarDisplayDuration.value = settings.metricsBarDisplayDuration
             }
         }
 
@@ -291,6 +307,26 @@ class SettingsViewModel(
     fun setMetricsBarHorizontalPadding(padding: Int) {
         prefsManager.metricsBarHorizontalPadding = padding
         _metricsBarHorizontalPadding.value = padding
+    }
+
+    /**
+     * Устанавливает режим отображения полоски метрик.
+     *
+     * @param mode "always" или "temporary"
+     */
+    fun setMetricsBarDisplayMode(mode: String) {
+        prefsManager.metricsBarDisplayMode = mode
+        _metricsBarDisplayMode.value = mode
+    }
+
+    /**
+     * Устанавливает время показа полоски метрик во временном режиме.
+     *
+     * @param duration время в секундах (2-5)
+     */
+    fun setMetricsBarDisplayDuration(duration: Int) {
+        prefsManager.metricsBarDisplayDuration = duration
+        _metricsBarDisplayDuration.value = duration
     }
 
     /**

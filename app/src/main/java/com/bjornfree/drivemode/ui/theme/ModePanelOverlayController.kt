@@ -551,6 +551,11 @@ class DrivingStatusOverlayController(
      */
     private fun detachView() {
         val c = container
+        val row = rootRow
+
+        // Отменяем анимации перед удалением
+        row?.animate()?.cancel()
+
         if (c != null) {
             try {
                 try {
@@ -572,6 +577,7 @@ class DrivingStatusOverlayController(
         tvTemps = null
         tvTires = null
         attached = false
+        isShowAnimationRunning = false
     }
     private fun hideTemporarily() {
         val c = container ?: return
@@ -693,6 +699,25 @@ class DrivingStatusOverlayController(
     private var autoHideSettingsRunnable: Runnable? = null
     private val SETTINGS_AUTO_HIDE_MS = 10000L  // Авто-скрытие через 10 секунд бездействия
 
+    // Временный режим отображения
+    private var displayMode: String = "always"  // "always" или "temporary"
+    private var displayDuration: Int = 3        // Время показа в секундах (2-5)
+    private var isTemporaryVisible: Boolean = false  // Текущее состояние видимости во временном режиме
+    private var autoHideRunnable: Runnable? = null   // Для автоскрытия плашки
+    private var isShowAnimationRunning: Boolean = false  // Флаг: анимация показа идёт
+
+    // Отслеживание изменений для временного режима
+    private var lastGear: String? = null
+    private var lastDriveMode: String? = null
+    private var lastCabinTemp: Float? = null
+    private var lastCabinTempChangeTime: Long = 0L
+    private val CABIN_TEMP_MIN_INTERVAL_MS = 60_000L  // Не чаще раз в минуту
+    private var lastTirePressures: IntArray? = null  // [FL, FR, RL, RR]
+
+    // Пороги критического давления (кПа)
+    private val TIRE_PRESSURE_LOW = 200   // < 2.0 бар - критично низкое
+    private val TIRE_PRESSURE_HIGH = 260  // > 2.6 бар - критично высокое
+
     /**
      * Вычисляет размер текста в зависимости от высоты плашки.
      * Для компактного режима (40dp) уменьшаем текст на ~30%,
@@ -718,7 +743,7 @@ class DrivingStatusOverlayController(
 
     fun setEnabled(isEnabled: Boolean) {
         ensureMainThread()
-        android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: вызван (текущее=$enabled, новое=$isEnabled)")
+        android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: вызван (текущее=$enabled, новое=$isEnabled, displayMode=$displayMode)")
         enabledInitialized = true
         if (enabled == isEnabled) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: состояние не изменилось, return")
@@ -727,17 +752,42 @@ class DrivingStatusOverlayController(
         enabled = isEnabled
         if (!enabled) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключаем (detach view, instance сохраняем)")
+            cancelAutoHide()
+            isTemporaryVisible = false
             detachView()
             android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: отключено, но currentInstance сохранен")
         } else {
-            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: включено")
+            android.util.Log.w("DrivingStatusOverlay", ">>> setEnabled: включено (режим: $displayMode)")
+            // Сбрасываем отслеживаемые значения и флаги при включении
+            isTemporaryVisible = false
+            lastGear = null
+            lastDriveMode = null
+            lastCabinTemp = null
+            lastCabinTempChangeTime = 0L
+            lastTirePressures = null
         }
     }
 
     fun ensureVisible() {
         ensureMainThread()
         if (!enabledInitialized || !enabled) return
+
+        android.util.Log.w("DrivingStatusOverlay", ">>> ensureVisible: вызван (displayMode=$displayMode, attached=$attached)")
+
+        // Создаём overlay
         ensureAttached()
+        updateMetricsVisibility()
+
+        // Показываем с анимацией как демонстрацию что плашка работает
+        if (displayMode == "temporary") {
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureVisible: временный режим, показываем демо и скрываем")
+            // Показываем временно как демонстрацию (forceShow = true)
+            showTemporarily("demo: включение плашки", forceShow = true)
+        } else {
+            // Режим "always" - показываем с анимацией и оставляем
+            android.util.Log.w("DrivingStatusOverlay", ">>> ensureVisible: режим always, показываем с анимацией")
+            showWithAnimation()
+        }
     }
 
     fun setDarkTheme(dark: Boolean) {
@@ -774,19 +824,46 @@ class DrivingStatusOverlayController(
         }
 
         val wasAttached = attached
-        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: wasAttached=$wasAttached")
+        val wasVisible = container?.visibility == View.VISIBLE
+        android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: wasAttached=$wasAttached, wasVisible=$wasVisible")
 
-        // Detach existing view (do NOT destroy instance)
+        if (wasAttached && wasVisible) {
+            // Плашка видна - скрываем с анимацией, потом пересоздаём
+            val row = rootRow
+            val c = container
+            if (row != null && c != null) {
+                val heightPx = (height * density)
+                val targetY = if (position == "top") -heightPx else heightPx
+
+                row.animate()
+                    .translationY(targetY)
+                    .setDuration(200L)
+                    .setInterpolator(android.view.animation.AccelerateInterpolator())
+                    .withEndAction {
+                        // После скрытия - пересоздаём в новой позиции
+                        detachView()
+                        position = newPosition
+                        ensureAttached()
+                        updateMetricsVisibility()
+                        // Показываем с анимацией в новом месте
+                        showWithAnimation()
+                    }
+                    .start()
+                return
+            }
+        }
+
+        // Плашка не видна или не создана - просто пересоздаём
         detachView()
-
         position = newPosition
         android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: позиция обновлена на $position")
 
         if (wasAttached) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setPosition: пересоздаем overlay")
             ensureAttached()
-            // КРИТИЧНО: Применяем сохранённую видимость метрик после пересоздания
             updateMetricsVisibility()
+            // Показываем с анимацией
+            showWithAnimation()
         }
     }
 
@@ -800,19 +877,46 @@ class DrivingStatusOverlayController(
         }
 
         val wasAttached = attached
-        android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: wasAttached=$wasAttached")
+        val wasVisible = container?.visibility == View.VISIBLE
+        android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: wasAttached=$wasAttached, wasVisible=$wasVisible")
 
-        // Detach existing view (do NOT destroy instance)
+        if (wasAttached && wasVisible) {
+            // Плашка видна - скрываем с анимацией, потом пересоздаём
+            val row = rootRow
+            val c = container
+            if (row != null && c != null) {
+                val heightPx = (height * density)
+                val targetY = if (position == "top") -heightPx else heightPx
+
+                row.animate()
+                    .translationY(targetY)
+                    .setDuration(200L)
+                    .setInterpolator(android.view.animation.AccelerateInterpolator())
+                    .withEndAction {
+                        // После скрытия - пересоздаём с новой высотой
+                        detachView()
+                        height = newHeight
+                        ensureAttached()
+                        updateMetricsVisibility()
+                        // Показываем с анимацией
+                        showWithAnimation()
+                    }
+                    .start()
+                return
+            }
+        }
+
+        // Плашка не видна или не создана - просто пересоздаём
         detachView()
-
         height = newHeight
         android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: высота обновлена на $height dp")
 
         if (wasAttached) {
             android.util.Log.w("DrivingStatusOverlay", ">>> setHeight: пересоздаем overlay")
             ensureAttached()
-            // КРИТИЧНО: Применяем сохранённую видимость метрик после пересоздания
             updateMetricsVisibility()
+            // Показываем с анимацией
+            showWithAnimation()
         }
     }
 
@@ -846,6 +950,282 @@ class DrivingStatusOverlayController(
             android.util.Log.w("DrivingStatusOverlay", ">>> updateLayoutWidth: width=${lp.width}px, padding=${paddingPx}px")
         } catch (e: Throwable) {
             android.util.Log.w("DrivingStatusOverlay", ">>> updateLayoutWidth: ошибка - ${e.message}")
+        }
+    }
+
+    /**
+     * Устанавливает режим отображения плашки.
+     * @param mode "always" - всегда, "temporary" - временно по событиям
+     */
+    fun setDisplayMode(mode: String) {
+        ensureMainThread()
+        val previousMode = displayMode
+        if (previousMode == mode) return
+
+        displayMode = mode
+        android.util.Log.w("DrivingStatusOverlay", ">>> setDisplayMode: режим $previousMode → $mode (attached=$attached, enabled=$enabled)")
+
+        if (mode == "always") {
+            // Переход в режим "всегда" - показываем плашку с анимацией
+            cancelAutoHide()
+            isTemporaryVisible = false  // Сбрасываем флаг временного режима
+
+            if (enabled) {
+                if (!attached) {
+                    // Плашка не создана - создаём
+                    try {
+                        ensureAttached()
+                        updateMetricsVisibility()
+                    } catch (e: Throwable) {
+                        android.util.Log.e("DrivingStatusOverlay", ">>> setDisplayMode: ошибка создания", e)
+                        return
+                    }
+                }
+                // Показываем с анимацией
+                android.util.Log.w("DrivingStatusOverlay", ">>> setDisplayMode: показываем плашку с анимацией (always)")
+                showWithAnimation()
+            }
+        } else {
+            // Переход в режим "временно" - скрываем плашку
+            cancelAutoHide()
+            isTemporaryVisible = false  // Сбрасываем флаг
+            // Сбрасываем отслеживаемые значения чтобы следующее изменение вызвало показ
+            lastGear = null
+            lastDriveMode = null
+            lastCabinTemp = null
+            lastCabinTempChangeTime = 0L
+            lastTirePressures = null
+
+            if (attached && container?.visibility == View.VISIBLE) {
+                android.util.Log.w("DrivingStatusOverlay", ">>> setDisplayMode: скрываем плашку (temporary)")
+                hideWithAnimation()
+            }
+        }
+    }
+
+    /**
+     * Устанавливает время показа плашки во временном режиме.
+     * @param duration время в секундах (2-5)
+     */
+    fun setDisplayDuration(duration: Int) {
+        ensureMainThread()
+        displayDuration = duration.coerceIn(2, 5)
+        android.util.Log.w("DrivingStatusOverlay", ">>> setDisplayDuration: время = $displayDuration сек")
+    }
+
+    /**
+     * Показывает плашку с анимацией выезда из края экрана.
+     * При повторном вызове во время анимации - просто продлевает показ (не дёргает).
+     */
+    private fun showWithAnimation() {
+        val c = container ?: return
+        val row = rootRow ?: return
+
+        // Запоминаем состояние ДО изменений
+        val wasVisible = c.visibility == View.VISIBLE
+        val wasInPlace = row.translationY == 0f
+
+        // Если уже полностью видна и на месте - ничего не делаем
+        if (wasVisible && wasInPlace && !isShowAnimationRunning) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> showWithAnimation: уже видна, пропускаем")
+            return
+        }
+
+        // Если анимация показа уже идёт - просто продлим таймер, не перезапускаем анимацию
+        if (isShowAnimationRunning) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> showWithAnimation: анимация уже идёт, продлеваем показ")
+            return
+        }
+
+        android.util.Log.w("DrivingStatusOverlay", ">>> showWithAnimation: запускаем анимацию (wasVisible=$wasVisible, wasInPlace=$wasInPlace)")
+
+        // Отменяем любую текущую анимацию (особенно важно для анимации скрытия)
+        row.animate().cancel()
+
+        // Вычисляем смещение для анимации
+        val heightPx = (height * density)
+
+        // Устанавливаем начальную позицию за краем экрана (если ещё не там)
+        if (!wasVisible || row.translationY == 0f) {
+            if (position == "top") {
+                row.translationY = -heightPx
+            } else {
+                row.translationY = heightPx
+            }
+        }
+
+        c.visibility = View.VISIBLE
+        isShowAnimationRunning = true
+
+        // Анимация выезда
+        row.animate()
+            .translationY(0f)
+            .setDuration(300L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .withEndAction {
+                isShowAnimationRunning = false
+            }
+            .start()
+    }
+
+    /**
+     * Скрывает плашку с анимацией ухода за край экрана.
+     */
+    private fun hideWithAnimation() {
+        val c = container ?: return
+        val row = rootRow ?: return
+
+        // Если плашка уже скрыта - ничего не делаем
+        if (c.visibility == View.GONE) return
+
+        // Если анимация показа идёт - не прерываем её
+        if (isShowAnimationRunning) {
+            android.util.Log.w("DrivingStatusOverlay", ">>> hideWithAnimation: анимация показа идёт, пропускаем скрытие")
+            return
+        }
+
+        // Вычисляем смещение для анимации
+        val heightPx = (height * density)
+
+        // Анимация ухода
+        val targetY = if (position == "top") -heightPx else heightPx
+
+        row.animate()
+            .translationY(targetY)
+            .setDuration(300L)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction {
+                c.visibility = View.GONE
+                isTemporaryVisible = false
+            }
+            .start()
+    }
+
+    /**
+     * Показывает плашку временно с автоскрытием.
+     * @param reason причина показа (для логов)
+     * @param forceShow если true - показать даже если режим не "temporary" (для демо)
+     */
+    private fun showTemporarily(reason: String = "", forceShow: Boolean = false) {
+        ensureMainThread()
+        if (!forceShow && displayMode != "temporary") return
+        if (!enabledInitialized || !enabled) return
+
+        android.util.Log.w("DrivingStatusOverlay", ">>> showTemporarily: причина = $reason, force=$forceShow")
+
+        // Отменяем предыдущий таймер автоскрытия
+        cancelAutoHide()
+
+        // Устанавливаем флаг видимости СРАЗУ (до ensureAttached),
+        // чтобы updateStatus знал что нужно обновить данные
+        isTemporaryVisible = true
+
+        // Убеждаемся что overlay создан
+        try {
+            ensureAttached()
+            updateMetricsVisibility()
+        } catch (e: Throwable) {
+            isTemporaryVisible = false
+            return
+        }
+
+        // Показываем с анимацией
+        showWithAnimation()
+
+        // Запускаем таймер автоскрытия
+        autoHideRunnable = Runnable {
+            hideWithAnimation()
+        }
+        container?.postDelayed(autoHideRunnable!!, displayDuration * 1000L)
+    }
+
+    /**
+     * Отменяет автоскрытие плашки.
+     */
+    private fun cancelAutoHide() {
+        autoHideRunnable?.let { container?.removeCallbacks(it) }
+        autoHideRunnable = null
+    }
+
+    /**
+     * Проверяет изменения и показывает плашку во временном режиме при необходимости.
+     * Вызывается из updateStatus().
+     */
+    private fun checkForTemporaryShow(state: DrivingStatusOverlayState) {
+        if (displayMode != "temporary") return
+
+        val now = System.currentTimeMillis()
+        var shouldShow = false
+        var reason = ""
+
+        // 1. Проверка изменения передачи (gear)
+        val currentGear = state.gear
+        if (currentGear != null && currentGear != lastGear && lastGear != null) {
+            shouldShow = true
+            reason = "gear: $lastGear → $currentGear"
+        }
+        lastGear = currentGear
+
+        // 2. Проверка изменения режима вождения
+        val currentMode = state.modeTitle
+        if (currentMode != null && currentMode != lastDriveMode && lastDriveMode != null) {
+            shouldShow = true
+            reason = "mode: $lastDriveMode → $currentMode"
+        }
+        lastDriveMode = currentMode
+
+        // 3. Проверка температуры в салоне (не чаще раз в минуту)
+        val currentCabinTemp = state.cabinTempC
+        if (currentCabinTemp != null && lastCabinTemp != null) {
+            val tempChanged = kotlin.math.abs(currentCabinTemp - lastCabinTemp!!) >= 1f
+            val timePassed = (now - lastCabinTempChangeTime) >= CABIN_TEMP_MIN_INTERVAL_MS
+            if (tempChanged && timePassed) {
+                shouldShow = true
+                reason = "cabin temp: ${lastCabinTemp?.toInt()}° → ${currentCabinTemp.toInt()}°"
+                lastCabinTempChangeTime = now
+            }
+        }
+        lastCabinTemp = currentCabinTemp
+
+        // 4. Проверка критического давления в шинах
+        val currentPressures = intArrayOf(
+            state.tirePressureFrontLeft ?: 0,
+            state.tirePressureFrontRight ?: 0,
+            state.tirePressureRearLeft ?: 0,
+            state.tirePressureRearRight ?: 0
+        )
+
+        if (lastTirePressures != null) {
+            for (i in currentPressures.indices) {
+                val pressure = currentPressures[i]
+                val lastPressure = lastTirePressures!![i]
+
+                if (pressure > 0) {
+                    // Проверяем вход в критическую зону
+                    val wasNormal = lastPressure in TIRE_PRESSURE_LOW..TIRE_PRESSURE_HIGH
+                    val isCritical = pressure < TIRE_PRESSURE_LOW || pressure > TIRE_PRESSURE_HIGH
+
+                    if (wasNormal && isCritical) {
+                        shouldShow = true
+                        val tireName = when (i) {
+                            0 -> "FL"
+                            1 -> "FR"
+                            2 -> "RL"
+                            3 -> "RR"
+                            else -> "?"
+                        }
+                        val status = if (pressure < TIRE_PRESSURE_LOW) "LOW" else "HIGH"
+                        reason = "tire $tireName: $status (${pressure/100f} bar)"
+                        break
+                    }
+                }
+            }
+        }
+        lastTirePressures = currentPressures
+
+        // Показываем плашку если нужно
+        if (shouldShow) {
+            showTemporarily(reason)
         }
     }
 
@@ -1349,6 +1729,16 @@ class DrivingStatusOverlayController(
             detachView()
         }
 
+        // Во временном режиме проверяем события
+        if (displayMode == "temporary") {
+            val wasTemporaryVisible = isTemporaryVisible
+            checkForTemporaryShow(state)
+            // Если плашка не видна и не должна показываться - выходим
+            if (!isTemporaryVisible && !wasTemporaryVisible) {
+                return
+            }
+        }
+
         try {
             ensureAttached()
         } catch (e: Throwable) {
@@ -1359,6 +1749,16 @@ class DrivingStatusOverlayController(
             return
         }
 
+        // Применяем видимость метрик после создания overlay
+        updateMetricsVisibility()
+
+        // В режиме "always" гарантируем что плашка видима
+        if (displayMode == "always") {
+            container?.visibility = View.VISIBLE
+            rootRow?.translationY = 0f
+        }
+
+        // Обновляем данные
         val modeText = state.modeTitle?.takeIf { it.isNotBlank() } ?: "—"
         tvMode?.text = modeText
         val modeColor = getModeColor(state.modeTitle)
@@ -1385,9 +1785,15 @@ class DrivingStatusOverlayController(
         ensureMainThread()
         android.util.Log.w("DrivingStatusOverlay", ">>> DESTROY: вызван (attached=$attached, position=$position)")
 
+        // Отменяем все отложенные действия и анимации
+        cancelAutoHide()
+        rootRow?.animate()?.cancel()
+
         // Скрываем настройки если открыты
         hideSettingsOverlay()
 
+        isTemporaryVisible = false
+        isShowAnimationRunning = false
         detachView()
 
         if (currentInstance === this) {
@@ -1579,7 +1985,14 @@ class DrivingStatusOverlayController(
         container = rootContainer
         rootRow = row
         attached = true
-        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: attached = true")
+
+        // ВАЖНО: Создаём overlay скрытым для последующей анимации появления
+        // Смещаем за край экрана в зависимости от позиции
+        val initialOffset = heightPx.toFloat()
+        row.translationY = if (position == "top") -initialOffset else initialOffset
+        rootContainer.visibility = View.GONE
+
+        android.util.Log.w("DrivingStatusOverlay", ">>> ensureAttached: attached = true, скрыт для анимации")
     }
 
     private fun getModeColor(mode: String?): Int {
@@ -1621,14 +2034,14 @@ class DrivingStatusOverlayController(
 
         return if (isDarkTheme) {
             when {
-                pressure < 200 -> TIRE_DARK_LOW
-                pressure > 280 -> TIRE_DARK_HIGH
+                pressure < TIRE_PRESSURE_LOW -> TIRE_DARK_LOW
+                pressure > TIRE_PRESSURE_HIGH -> TIRE_DARK_HIGH
                 else -> TIRE_DARK_NORMAL
             }
         } else {
             when {
-                pressure < 200 -> TIRE_LIGHT_LOW
-                pressure > 280 -> TIRE_LIGHT_HIGH
+                pressure < TIRE_PRESSURE_LOW -> TIRE_LIGHT_LOW
+                pressure > TIRE_PRESSURE_HIGH -> TIRE_LIGHT_HIGH
                 else -> TIRE_LIGHT_NORMAL
             }
         }

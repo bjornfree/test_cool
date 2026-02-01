@@ -52,6 +52,10 @@ class PreferencesManager(context: Context) {
         private const val KEY_METRIC_MODE_VISIBLE = "metric_mode_visible"
         private const val KEY_METRIC_TEMPS_VISIBLE = "metric_temps_visible"
         private const val KEY_METRIC_TIRES_VISIBLE = "metric_tires_visible"
+        // Режим отображения плашки: "always" или "temporary"
+        private const val KEY_METRICS_BAR_DISPLAY_MODE = "metrics_bar_display_mode"
+        // Время показа плашки во временном режиме (2-5 сек)
+        private const val KEY_METRICS_BAR_DISPLAY_DURATION = "metrics_bar_display_duration"
         private const val KEY_DEMO_MODE = "demo_mode"
         private const val KEY_AUTO_DRIVE_MODE_ENABLED = "auto_drive_mode_enabled"
         private const val KEY_SELECTED_DRIVE_MODE = "selected_drive_mode"
@@ -299,6 +303,28 @@ class PreferencesManager(context: Context) {
         set(value) { prefs.edit().putBoolean(KEY_METRIC_TIRES_VISIBLE, value).apply() }
 
     /**
+     * Режим отображения полоски метрик.
+     * "always" = всегда отображается (по умолчанию)
+     * "temporary" = появляется только при событиях
+     */
+    var metricsBarDisplayMode: String
+        get() = prefs.getString(KEY_METRICS_BAR_DISPLAY_MODE, "always") ?: "always"
+        set(value) {
+            prefs.edit().putString(KEY_METRICS_BAR_DISPLAY_MODE, value).apply()
+        }
+
+    /**
+     * Время показа полоски метрик во временном режиме (в секундах).
+     * По умолчанию 3 секунды.
+     * Диапазон: 2-5 секунд
+     */
+    var metricsBarDisplayDuration: Int
+        get() = prefs.getInt(KEY_METRICS_BAR_DISPLAY_DURATION, 3)
+        set(value) {
+            prefs.edit().putInt(KEY_METRICS_BAR_DISPLAY_DURATION, value.coerceIn(2, 5)).apply()
+        }
+
+    /**
      * Demo mode для тестирования без реального автомобиля.
      */
     var demoMode: Boolean
@@ -400,6 +426,8 @@ class PreferencesManager(context: Context) {
         val metricsBarPosition: String,
         val metricsBarHeight: Int,
         val metricsBarHorizontalPadding: Int,
+        val metricsBarDisplayMode: String,  // "always" или "temporary"
+        val metricsBarDisplayDuration: Int, // 2-5 секунд
         val borderEnabled: Boolean,
         val panelEnabled: Boolean,
         // Видимость отдельных метрик
@@ -448,6 +476,8 @@ class PreferencesManager(context: Context) {
                 KEY_METRICS_BAR_POSITION,
                 KEY_METRICS_BAR_HEIGHT,
                 KEY_METRICS_BAR_HORIZONTAL_PADDING,
+                KEY_METRICS_BAR_DISPLAY_MODE,
+                KEY_METRICS_BAR_DISPLAY_DURATION,
                 KEY_BORDER_ENABLED,
                 KEY_PANEL_ENABLED,
                 KEY_METRIC_RANGE_VISIBLE,
@@ -588,6 +618,8 @@ class PreferencesManager(context: Context) {
             metricsBarPosition = metricsBarPosition,
             metricsBarHeight = metricsBarHeight,
             metricsBarHorizontalPadding = metricsBarHorizontalPadding,
+            metricsBarDisplayMode = metricsBarDisplayMode,
+            metricsBarDisplayDuration = metricsBarDisplayDuration,
             borderEnabled = borderEnabled,
             panelEnabled = panelEnabled,
             metricRangeVisible = metricRangeVisible,
